@@ -186,9 +186,8 @@ export async function POST(req: NextRequest) {
       m.role === "user" || m.role === "assistant"
     )
     .map((m: { role: string; content: string }) => ({
-      role: m.role,
-      content: typeof m.content === "string" ? m.content : "",
-    }));
+  role: m.role as "user" | "assistant",
+  content: typeof m.content === "string" ? m.content : "",}));
 
   // ── Call Claude ─────────────────────────────────────────────────────────────
   try {

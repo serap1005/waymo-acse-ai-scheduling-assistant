@@ -337,7 +337,7 @@ function ChatScreen({
   setInput: (v: string) => void;
   sendMessage: () => void;
   loading: boolean;
-  bottomRef: React.RefObject<HTMLDivElement>;
+  bottomRef: React.RefObject<HTMLDivElement | null>;
   onBack: () => void;
 }) {
   return (
@@ -535,7 +535,7 @@ export default function Home() {
   }]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
