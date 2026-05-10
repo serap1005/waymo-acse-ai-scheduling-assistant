@@ -8,7 +8,7 @@ import {
   NEIGHBORHOODS,
   PANEL_HEIGHT,
   PANEL_WIDTH,
-} from "../lib/sf";
+} from "../lib/la";
 import type { PanelKind } from "../lib/types";
 
 export interface PanelHandle {

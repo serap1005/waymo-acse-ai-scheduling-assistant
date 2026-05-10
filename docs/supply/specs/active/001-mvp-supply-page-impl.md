@@ -5,14 +5,14 @@
 **Status:** draft (awaiting Logan sign-off)
 **Date:** 2026-05-08
 
-This spec turns plan 001 into file-level work. The spike at `app/supply/page.tsx` is v0 — this implementation rewrites it, preserving the SF outline, neighborhood positions, palette, and hero layout that landed.
+This spec turns plan 001 into file-level work. The spike at `app/supply/page.tsx` is v0 — this implementation rewrites it, preserving the neighborhood layout, palette, and hero layout that landed. (The geography subsequently migrated from SF to LA — see `SPEC.md` iteration log entry 2026-05-09.)
 
 ## Files to create or change
 
 | Path | Change | Notes |
 |---|---|---|
 | `app/supply/page.tsx` | Rewrite | Becomes the page shell. Holds the rAF loop. Owns refs to children. |
-| `app/supply/components/Panel.tsx` | New | Stylized SF panel. Receives vehicle ref-callbacks. Right panel renders split ETA. |
+| `app/supply/components/Panel.tsx` | New | Stylized LA panel. Receives vehicle ref-callbacks. Right panel renders split ETA. |
 | `app/supply/components/Scrubber.tsx` | New | Time-of-day scrubber. Autoplay + drag. Writes `simTimeRef`, manages its own playhead via ref. |
 | `app/supply/components/AdoptionSlider.tsx` | New | 5–100% slider. Uses local state + writes `adoptionRef`. |
 | `app/supply/components/Legend.tsx` | New | Shared, prominent legend near hero. Descriptive labels per spike feedback. |
@@ -21,7 +21,7 @@ This spec turns plan 001 into file-level work. The spike at `app/supply/page.tsx
 | `app/supply/lib/simulation.ts` | New | Pure functions. Generates `FleetCurve` and `KPICurve` for each panel. Deterministic seeded. |
 | `app/supply/lib/types.ts` | New | Shared TypeScript types (see §3). |
 | `app/supply/lib/animation.ts` | New | `useAnimationLoop` hook + scalar/position interpolation helpers. |
-| `app/supply/lib/sf.ts` | New | SF outline path, neighborhood positions, corridor list. Carried over from spike. |
+| `app/supply/lib/la.ts` | New | Neighborhood positions, corridor list, panel viewBox dims, peak windows. (Originally `sf.ts`; renamed when geography migrated to LA.) |
 
 No files outside `app/supply/` are touched. `app/page.tsx`, `app/api/chat/`, `app/components/`, `app/layout.tsx`, `app/globals.css` are off-limits per `gotchas.md`.
 
@@ -167,7 +167,7 @@ useAnimationLoop((deltaMs) => {
 
 Deterministic, seeded. Same data on every load.
 
-- **Fleet (ondemand):** 40 vehicles. Each has 30 keyframes. Positions are seeded random walks within the SF outline. State distribution is heavy on `idle` (matching 44.3% deadhead baseline).
+- **Fleet (ondemand):** 40 vehicles. Each has 30 keyframes. Positions are seeded random walks within `CITY_BOUNDS`. State distribution is heavy on `idle` (matching 44.3% deadhead baseline).
 - **Fleet (commutepass):** 40 vehicles. `floor(40 * adoption)` vehicles are "subscriber-aware" — keyframes cluster near corridor origins during 7–9 AM, move along corridors during 8–9 AM, sit at destinations mid-day, return 5–7 PM. The remaining vehicles use the same wander logic as ondemand.
 - **KPIs (ondemand):** baseline curves. Deadhead pct stays high; ETA spikes at peak windows.
 - **KPIs (commutepass):** "ideal" curves at adoption=1.0. Deadhead drops, ETA stays flat. Subscriber ETA noticeably lower at peak; non-subscriber ETA matches or beats ondemand baseline (the visible guardrail).
@@ -191,7 +191,7 @@ Adoption blend at runtime: `value(t, a) = lerp(ondemand[t], commutepass[t], a)`.
 ## Risks introduced by this spec
 
 - The animation architecture is finicky. If a child component accidentally takes a React-state-driven prop that the rAF loop is also writing, perf drops. Mitigation: code review with this spec in hand; explicit comment on every ref-driven node.
-- The seeded sim might produce occasional "ugly" frames (vehicles overlapping, leaving the city outline). Mitigation: clamp positions to the SF bounding shape during keyframe generation.
+- The seeded sim might produce occasional "ugly" frames (vehicles overlapping, leaving the city outline). Mitigation: clamp positions to `CITY_BOUNDS` during keyframe generation.
 
 ## Validation
 

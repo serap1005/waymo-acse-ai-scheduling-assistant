@@ -19,11 +19,12 @@ These belong to the other contributor and are out of scope for Logan's half:
 - `app/page.tsx`
 - `app/api/chat/`
 - `app/components/` (her ScheduleCard, etc.)
-- `app/layout.tsx` (shared — leave alone)
 - `app/globals.css` (shared — leave alone; scope new styles via Tailwind utility classes or component-local style)
 - Root `CLAUDE.md`, `AGENTS.md`, `SOURCE_OF_TRUTH.md`, `README.md`
 
-If a feature legitimately requires modifying a shared file, surface it in a spec and get explicit Logan sign-off first.
+**Jointly-owned exception:** `app/layout.tsx` has one Logan-owned touchpoint — the `<ViewSwitcher />` import and render — added so users can toggle between `/` (Sera's) and `/supply` (Logan's) without manually editing the URL. Approved by Logan, requires Sera coordination on PR. Do not modify `layout.tsx` further without sign-off.
+
+If a feature legitimately requires modifying any other shared file, surface it in a spec and get explicit Logan sign-off first.
 
 ## Phase 1 is independent
 

@@ -192,7 +192,7 @@ export default function SupplyPage() {
             Waymo · Fleet Allocation Sandbox
           </span>
           <span style={{ fontSize: 16, fontWeight: 700, color: "#F1F5F9" }}>
-            San Francisco · Supply view
+            Los Angeles · Supply view
           </span>
         </div>
         <div

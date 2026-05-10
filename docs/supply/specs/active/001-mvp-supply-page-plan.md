@@ -17,9 +17,9 @@ Logan owns half of a shared demo with Sera. Her half (ACSE chatbot) shows the *u
 
 1. **Single full-screen page at `/supply`.** No phone frame. Desktop-first; mobile responsiveness is out of scope for Phase 1.
 
-2. **Two stylized SF panels side by side.** Left: *"On-Demand Only"*. Right: *"With Commute Pass"*. Same neighborhoods, same demand, same time — only the dispatch logic differs. The visual symmetry is the point.
+2. **Two stylized LA panels side by side.** Left: *"On-Demand Only"*. Right: *"With Commute Pass"*. Same neighborhoods, same demand, same time — only the dispatch logic differs. The visual symmetry is the point.
 
-3. **Stylized SF, SVG-based.** Hand-drawn neighborhood blobs + glowing commute corridor lines (Mission↔Downtown, Sunset↔SOMA, Marina↔Financial, etc.). No external map library. Color and motion carry meaning per `visual-conventions.md`.
+3. **Stylized LA, SVG-based.** Hand-drawn neighborhood markers + glowing commute corridor lines (Santa Monica↔DTLA, Westwood↔DTLA, Pasadena↔DTLA, etc. — all morning routes converge on DTLA). No external map library. Color and motion carry meaning per `visual-conventions.md`. (Originally SF; migrated 2026-05-09 — see `SPEC.md`.)
 
 4. **Vehicles as colored dots.** ~40 vehicles per panel (visual clarity over fleet realism). Color-coded by state: idle, repositioning, dispatched, with-passenger. Animate via CSS transforms / `requestAnimationFrame`, not per-frame React state.
 
@@ -54,7 +54,7 @@ Logan owns half of a shared demo with Sera. Her half (ACSE chatbot) shows the *u
 
 - [ ] `/supply` renders in browser without console errors
 - [ ] Split-view layout: left panel labeled "On-Demand Only", right "With Commute Pass"
-- [ ] Stylized SF visible in both panels with named corridors
+- [ ] Stylized LA visible in both panels with named corridors converging on DTLA
 - [ ] ~40 vehicles per panel, color-coded by state, animating
 - [ ] Single shared legend near hero/scrubber, prominent enough to decode within 3 seconds; descriptive labels (e.g. "Idle (deadheading)")
 - [ ] Demand pulses fire at realistic peak times (8–9 AM, 5–7 PM, lunch optional)

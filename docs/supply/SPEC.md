@@ -85,6 +85,22 @@ Chronological. Every decision, every rework, with rationale.
 **Decision:** Code under `app/supply/`, docs under `docs/supply/`. Shared `layout.tsx` and `globals.css` not modified by Logan. Joint demo route at `app/demo/` is deferred and optional.
 **Rationale:** Clean namespace separation. Next.js App Router segments mean `/supply` is fully isolated from `/`. iframes are an option for the joint view but only as a fallback.
 
+### 2026-05-09 — Migrate geography from SF to LA + add cross-route view switcher
+**Two changes shipped together:**
+
+**1. Geography → Los Angeles.** Demo users and UX study participants will recognize LA neighborhoods more readily than SF (despite SF being the actual pilot market in the brief). LA is also a real Waymo expansion market in the Months 5–6 rollout, so the framing is plausible.
+- Renamed `app/supply/lib/sf.ts` → `app/supply/lib/la.ts`. Imports updated in `simulation.ts` and `Panel.tsx`.
+- New neighborhood layout: Santa Monica, Venice, Culver City, LAX, Westwood, Beverly Hills, WeHo, Hollywood, Koreatown, DTLA, Pasadena.
+- New corridors: all morning routes converge on DTLA (Santa Monica → DTLA, Venice → DTLA, Westwood → DTLA, WeHo → DTLA, Hollywood → DTLA, Pasadena → DTLA). Realistic for LA's hub-and-spoke employment geography and visually creates a clear "everyone heads downtown" pattern at peak.
+- Page header text and footer references updated. Simulation cache invalidates on module reload, so paths regenerate cleanly to LA bounds.
+- Older SPEC entries still mention "SF" historically — that's accurate (we built SF first); this entry is the migration record.
+
+**2. Cross-route view switcher.** Users no longer need to manually edit the URL to toggle between Sera's chatbot at `/` and Logan's supply view at `/supply`.
+- New component `app/supply/components/ViewSwitcher.tsx` — floating top-right pill toggle with two tabs (Rider · Supply). Active tab highlights teal, inactive is muted gray. Backdrop-blur for dark/light backgrounds. `usePathname` from `next/navigation` resolves the active tab.
+- **Touched `app/layout.tsx`** (Sera's territory, by Logan's explicit approval). Two-line change: import the component, render it as a sibling to `{children}`. This is the *only* shared-file touch needed for the toggle UX. Documented in `gotchas.md` as a jointly-owned exception requiring Sera coordination on PR.
+
+**Why bundled:** Both changes affect demo presentation (location framing + navigation), and they ship together to one branch for Sera's review.
+
 ### 2026-05-09 — Compress to no-scroll height
 **Problem Logan identified:** Couldn't see metrics and animation simultaneously — the page exceeded a typical laptop viewport, forcing scroll between supporting evidence (KPIs) and the visualization.
 
