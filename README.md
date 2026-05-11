@@ -6,7 +6,7 @@
 
 ## Safety was round one. Waymo's round two is your 8:30 AM.
 
-*The autonomous vehicle leader is launching a monthly commuter subscription with locked rated and an AI scheduling agent. A bet that converts spontaneous riders into recurring ones is the key to making the economics work.*
+*The autonomous vehicle leader is launching a monthly commuter subscription with locked rates and an AI scheduling agent. A bet that converts spontaneous riders into recurring ones is the key to making the economics work.*
 
 SAN FRANCISCO - For the better part of a decade, Waymo's pitch to the riding public was a single word: safer. The company has now logged enough autonomous miles, in enough cities, to make that case largely uncontested. The harder question, the one that determines whether autonomous rideshare is a viable mass-market business, is whether it can be reliable enough to plan a life around.
 
