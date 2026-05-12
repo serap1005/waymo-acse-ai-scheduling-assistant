@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { ViewSwitcher } from "./supply/components/ViewSwitcher";
 
 export const metadata: Metadata = {
   title: "Waymo Commute Pass",
@@ -13,7 +14,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <ViewSwitcher />
+        {children}
+      </body>
     </html>
   );
 }
