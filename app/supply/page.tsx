@@ -2,9 +2,11 @@
 
 import { useMemo, useRef, useState } from "react";
 import { HeroBlock, type HeroRefs } from "./components/HeroBlock";
+import { InjectButton } from "./components/InjectButton";
 import { KPIStrip, type KpiRefs } from "./components/KPIStrip";
 import { Legend } from "./components/Legend";
 import { Panel, type PanelHandle } from "./components/Panel";
+import { SchedulesStrip } from "./components/SchedulesStrip";
 import { Scrubber } from "./components/Scrubber";
 import { useAnimationLoop } from "./lib/animation";
 import {
@@ -12,6 +14,7 @@ import {
   interpolateKpi,
   interpolateVehicle,
 } from "./lib/simulation";
+import { rideToCorridor, useScheduledRides } from "./lib/scheduleStore";
 import { STATE_COLOR } from "./lib/types";
 
 const LOOP_MS = 30_000;
@@ -44,6 +47,11 @@ function fmtHour(t: number): string {
 
 export default function SupplyPage() {
   const sim = useMemo(() => generateSimulation(), []);
+  const { rides, addRide, removeRide, clearAll } = useScheduledRides();
+  const userCorridors = useMemo(
+    () => rides.map(rideToCorridor).filter((c): c is NonNullable<typeof c> => c !== null),
+    [rides],
+  );
 
   const simTimeRef = useRef(0);
   const [isPlaying, setIsPlaying] = useState(true);
@@ -211,6 +219,7 @@ export default function SupplyPage() {
       <HeroBlock refs={heroRefs} />
       <KPIStrip refs={kpiRefs} />
       <Legend />
+      <SchedulesStrip rides={rides} onRemove={removeRide} />
       <Scrubber
         simTimeRef={simTimeRef}
         fillRef={scrubberFillRef}
@@ -238,6 +247,7 @@ export default function SupplyPage() {
           caption="Predictable demand · pre-positioned fleet"
           showCorridorPulses={true}
           vehicleCount={VEHICLE_COUNT}
+          userCorridors={userCorridors}
         />
       </div>
 
@@ -253,6 +263,8 @@ export default function SupplyPage() {
         All values simulated. Baselines (deadhead 44.3%, peak ETA 5.7 min) from the Waymo Commute Pass brief;
         &quot;With Commute Pass&quot; values are aspirational projections at 50% subscriber adoption.
       </footer>
+
+      <InjectButton onInject={addRide} onClear={clearAll} hasRides={rides.length > 0} />
     </main>
   );
 }

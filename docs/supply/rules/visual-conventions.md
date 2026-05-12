@@ -2,7 +2,7 @@
 
 Look-and-feel rules for the stylized simulation.
 
-- **Color is meaningful, never decorative** (per global CLAUDE.md). Vehicle states get distinct colors mapped to a single legend. KPI deltas use a consistent direction palette.
+- **Color is meaningful, never decorative** (per global CLAUDE.md). Vehicle states get distinct colors mapped to a single legend. KPI deltas use a consistent direction palette. **User-added schedules render orange** (`#FB923C`) on the map and in the schedules strip — distinct from system-generated teal corridors. The color encodes "this is your input."
 - **No purple/green gradients.** Ever.
 - **Honest data viz.** Label simulated values as simulated. No misleading axis truncation, no fake precision.
 - **Stylized, not realistic.** Dot-grid or vector-art LA, not a Mapbox tile. If stylized starts to look bad, escalate to Logan before swapping in a real basemap.

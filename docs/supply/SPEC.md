@@ -85,6 +85,22 @@ Chronological. Every decision, every rework, with rationale.
 **Decision:** Code under `app/supply/`, docs under `docs/supply/`. Shared `layout.tsx` and `globals.css` not modified by Logan. Joint demo route at `app/demo/` is deferred and optional.
 **Rationale:** Clean namespace separation. Next.js App Router segments mean `/supply` is fully isolated from `/`. iframes are an option for the joint view but only as a fallback.
 
+### 2026-05-10 — Phase 2 linkage (Logan-side build)
+**Goal:** surface user-created schedules from Sera's chat inside the `/supply` view so the demo tells one continuous story — user creates schedule, fleet pre-positions for it, deadhead reduction visible. See `docs/supply/specs/active/002-phase-2-linkage.md` for the full spec.
+
+**Logan-side shipped end-to-end with a dev test-inject button so the demo works before Sera's three small additive changes land.**
+
+- **`scheduleStore.ts`** — `ScheduledRide` schema (Sera's `ScheduleData` + `id` + `createdAt`), `useScheduledRides` hook with `localStorage` storage and dual event listening (`storage` for cross-tab, a custom `commute-pass:schedules-updated` for same-tab). Plus `matchNeighborhood()` fuzzy matcher: alias table maps user-typed strings ("downtown", "ucla", "k-town") to LA neighborhoods.
+- **User corridor visualization** — render on top of pre-baked corridors on the right panel only. Visually distinct: 7px underline glow + 3.5px solid line with animated `stroke-dashoffset` for a "data flowing" feel, plus a pulsing midpoint bead and a `SCHEDULED` label above the corridor. Same teal palette — visual weight conveys "this is yours," no new color introduced.
+- **`SchedulesStrip`** — a tight horizontal pill list under the legend, shown only when ≥1 schedule exists. Each pill shows origin → destination · day-pattern · departure time, with a tiny remove button. Pills are dimmer if their origin/destination didn't map to an LA neighborhood (no on-map element, but the entry still persists).
+- **`InjectButton`** — dev-only floating affordance bottom-right with a dotted border so it visibly reads as "demo only." `+ Test schedule` cycles random samples; `× Clear` empties the store. Removed entirely once Sera's side ships and real schedules flow through.
+- **No simulation changes.** Adding a schedule doesn't regenerate fleet paths or shift KPI numbers (the simulation is independent). The on-map highlight is the user's visible reward; the KPI numbers stay anchored to the brief's baselines.
+
+**Awaiting Sera coordination — three additive changes to her code:**
+1. System prompt: add LA to covered markets (`"San Francisco, Phoenix, and Los Angeles"`) + an LA pricing anchor. Doesn't break her SF/Phoenix flows.
+2. After `parseSchedule` returns successfully, append the schedule to `localStorage[commute-pass:scheduled-rides]` and dispatch the same-tab `commute-pass:schedules-updated` event. ~5 lines.
+3. (Optional) "→ See fleet impact" link on her schedule card that navigates to `/supply`.
+
 ### 2026-05-09 — Migrate geography from SF to LA + add cross-route view switcher
 **Two changes shipped together:**
 

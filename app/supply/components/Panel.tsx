@@ -9,6 +9,7 @@ import {
   PANEL_HEIGHT,
   PANEL_WIDTH,
 } from "../lib/la";
+import type { UserCorridor } from "../lib/scheduleStore";
 import type { PanelKind } from "../lib/types";
 
 export interface PanelHandle {
@@ -22,10 +23,11 @@ interface Props {
   caption: string;
   showCorridorPulses: boolean;
   vehicleCount: number;
+  userCorridors?: UserCorridor[];
 }
 
 export const Panel = forwardRef<PanelHandle, Props>(function Panel(
-  { panelKind, title, eyebrow, caption, showCorridorPulses, vehicleCount },
+  { panelKind, title, eyebrow, caption, showCorridorPulses, vehicleCount, userCorridors = [] },
   ref,
 ) {
   const vehicleNodes = useRef<(SVGGElement | null)[]>([]);
@@ -173,6 +175,63 @@ export const Panel = forwardRef<PanelHandle, Props>(function Panel(
               {showCorridorPulses && (
                 <circle cx={(A.cx + B.cx) / 2} cy={(A.cy + B.cy) / 2} r={4} fill="#22D3EE" opacity={0.85} />
               )}
+            </g>
+          );
+        })}
+
+        {/* User-scheduled corridors — orange to distinguish from system-generated
+            teal corridors, finer weight + animated dash flow + small midpoint bead. */}
+        {userCorridors.map((uc) => {
+          const midX = (uc.from.cx + uc.to.cx) / 2;
+          const midY = (uc.from.cy + uc.to.cy) / 2;
+          return (
+            <g key={uc.id}>
+              <line
+                x1={uc.from.cx}
+                y1={uc.from.cy}
+                x2={uc.to.cx}
+                y2={uc.to.cy}
+                stroke="#FB923C"
+                strokeWidth={4}
+                opacity={0.22}
+              />
+              <line
+                x1={uc.from.cx}
+                y1={uc.from.cy}
+                x2={uc.to.cx}
+                y2={uc.to.cy}
+                stroke="#FB923C"
+                strokeWidth={1.75}
+                strokeDasharray="7 4"
+                opacity={1}
+              >
+                <animate
+                  attributeName="stroke-dashoffset"
+                  from="0"
+                  to="-11"
+                  dur="1.2s"
+                  repeatCount="indefinite"
+                />
+              </line>
+              <circle cx={midX} cy={midY} r={3.5} fill="#FB923C">
+                <animate
+                  attributeName="r"
+                  values="3;4.5;3"
+                  dur="1.6s"
+                  repeatCount="indefinite"
+                />
+              </circle>
+              <text
+                x={midX}
+                y={midY - 9}
+                fontSize={8}
+                fontWeight={800}
+                fill="#FB923C"
+                textAnchor="middle"
+                letterSpacing="0.16em"
+              >
+                SCHEDULED
+              </text>
             </g>
           );
         })}
