@@ -2,9 +2,6 @@
 
 import type { ScheduledRide } from "../lib/scheduleStore";
 
-// Sample schedules for demo rehearsal. Mix of corridors that match pre-baked
-// ones (Santa Monica → DTLA), novel matches (Beverly Hills → DTLA), and one
-// no-match case (Mission District) so we can show all three rendering branches.
 const SAMPLES: Omit<ScheduledRide, "id" | "createdAt">[] = [
   {
     origin: "Santa Monica",
@@ -66,28 +63,29 @@ export function InjectButton({
     <div
       style={{
         position: "fixed",
-        bottom: 16,
-        right: 16,
+        top: 44,
+        right: 250,
         zIndex: 9998,
         display: "flex",
-        gap: 6,
-        background: "rgba(11, 16, 32, 0.85)",
+        gap: 4,
+        alignItems: "center",
+        background: "rgba(255,255,255,0.08)",
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
         padding: 6,
         borderRadius: 999,
-        border: "1px dashed #475569",
-        boxShadow: "0 8px 24px rgba(0, 0, 0, 0.35)",
+        border: "1.5px dashed rgba(255,255,255,0.2)",
+        boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
       }}
     >
       <span
         style={{
-          fontSize: 9,
+          fontSize: 11,
           color: "#64748B",
-          letterSpacing: "0.18em",
+          letterSpacing: "0.1em",
           textTransform: "uppercase",
           fontWeight: 700,
-          padding: "5px 8px 5px 10px",
+          padding: "0 8px",
           alignSelf: "center",
         }}
       >
@@ -96,12 +94,12 @@ export function InjectButton({
       <button
         onClick={handleInject}
         style={{
-          padding: "5px 12px",
+          padding: "10px 22px",
           borderRadius: 999,
           background: "#22D3EE",
           color: "#0B1020",
           border: "none",
-          fontSize: 11,
+          fontSize: 13,
           fontWeight: 700,
           letterSpacing: "0.05em",
           cursor: "pointer",
@@ -113,12 +111,12 @@ export function InjectButton({
         <button
           onClick={onClear}
           style={{
-            padding: "5px 12px",
+            padding: "10px 18px",
             borderRadius: 999,
             background: "transparent",
             color: "#94A3B8",
-            border: "1px solid #475569",
-            fontSize: 11,
+            border: "1px solid rgba(255,255,255,0.2)",
+            fontSize: 13,
             fontWeight: 600,
             letterSpacing: "0.05em",
             cursor: "pointer",
