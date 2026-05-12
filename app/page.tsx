@@ -161,6 +161,21 @@ function InlineScheduleCard({ schedule }: { schedule: ScheduleData }) {
         }}>
           Confirm Schedule
         </button>
+
+        {/* Change 3 — See fleet impact link */}
+        <a
+          href="/supply"
+          style={{
+            display: "block",
+            marginTop: 8,
+            fontSize: 12,
+            color: "#22D3EE",
+            textDecoration: "none",
+            fontWeight: 600,
+          }}
+        >
+          See fleet impact →
+        </a>
       </div>
     </div>
   );
@@ -372,7 +387,7 @@ function ChatScreen({
         <span style={{
           fontSize: 10, color: "#9CA3AF", background: "#F3F4F6",
           padding: "3px 8px", borderRadius: 50, flexShrink: 0,
-        }}>SF · PHX</span>
+        }}>SF · PHX · LA</span>
       </div>
 
       {/* Messages */}
@@ -413,10 +428,7 @@ function ChatScreen({
 
             {/* Schedule card — appears below text for assistant messages */}
             {m.scheduleCard && (
-              <div style={{
-                marginLeft: 36,
-                marginTop: 8,
-              }}>
+              <div style={{ marginLeft: 36, marginTop: 8 }}>
                 <InlineScheduleCard schedule={m.scheduleCard} />
               </div>
             )}
@@ -457,8 +469,8 @@ function ChatScreen({
         }}>
           {[
             "Mission District to downtown SF, Mon–Fri 8:30 AM",
+            "Santa Monica to DTLA, weekdays 8 AM",
             "Cancellation policy?",
-            "Scottsdale to Sky Harbor, 7 AM",
           ].map((prompt, i) => (
             <button
               key={i}
@@ -553,8 +565,8 @@ export default function Home() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-  messages: updated.map(({ role, content }) => ({ role, content })),
-}),
+          messages: updated.map(({ role, content }) => ({ role, content })),
+        }),
       });
       const data = await res.json();
       const raw = data.message;
@@ -562,7 +574,17 @@ export default function Home() {
       const cleaned = cleanMessage(raw);
 
       if (parsed) {
-        // Text summary first, then card attached to same message
+        // Change 2 — persist schedule to localStorage for /supply
+        const scheduledRide = {
+          ...parsed,
+          id: crypto.randomUUID(),
+          createdAt: Date.now(),
+        };
+        const STORAGE_KEY = "commute-pass:scheduled-rides";
+        const existing = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]");
+        localStorage.setItem(STORAGE_KEY, JSON.stringify([...existing, scheduledRide]));
+        window.dispatchEvent(new CustomEvent("commute-pass:schedules-updated"));
+
         setMessages((prev) => [...prev, {
           role: "assistant",
           content: cleaned,
@@ -645,7 +667,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Right panel — simplified */}
+      {/* Right panel */}
       <div style={{ width: 240, display: "flex", flexDirection: "column", gap: 12 }}>
         <div>
           <p style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", textTransform: "uppercase", letterSpacing: "0.1em", margin: "0 0 4px 0" }}>
@@ -667,7 +689,7 @@ export default function Home() {
             { n: "1", text: "Tap the Commute Pass card on the home screen" },
             { n: "2", text: "Describe your commute in natural language" },
             { n: "3", text: "Watch ACSE parse your schedule and generate a price-locked card" },
-            { n: "4", text: "Ask follow-up questions about policy or pricing" },
+            { n: "4", text: "Tap 'See fleet impact →' to see your corridor on the supply view" },
           ].map((step) => (
             <div key={step.n} style={{ display: "flex", gap: 10, marginBottom: 10, alignItems: "flex-start" }}>
               <div style={{
@@ -690,8 +712,8 @@ export default function Home() {
           </p>
           {[
             "Mission District to Salesforce Tower, Mon–Fri 8:30 AM",
+            "Santa Monica to DTLA, weekdays 8 AM",
             "What's the cancellation policy?",
-            "Scottsdale to Sky Harbor, weekdays 7 AM",
           ].map((q, i) => (
             <p key={i} style={{
               fontSize: 11, color: "#4B5563", margin: "0 0 6px 0",
