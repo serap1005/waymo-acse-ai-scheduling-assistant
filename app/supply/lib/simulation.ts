@@ -160,7 +160,7 @@ function generateSmartFleetPath(id: number): VehiclePath {
 }
 
 // Right-panel subscribers: corridor-locked. Mid-day they actively run short trips around destination zones,
-// not idle (per Logan v2 critique — idle implies wasted supply, which is the wrong story).
+// not idle (v2 fix — idle implies wasted supply, which is the wrong story).
 function generateSubscriberPath(id: number): VehiclePath {
   const rng = seedRand(id * 17 + 1009);
   const tempoOffset = (rng() - 0.5) * 0.018;

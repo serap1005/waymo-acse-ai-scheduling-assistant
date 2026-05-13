@@ -202,7 +202,7 @@ export interface EvalCase {
     | "edge";
   description: string;
   input: AllocatorInput;
-  // Cases marked as "critical" must pass for launch (per Logan's eval set methodology:
+  // Cases marked as "critical" must pass for launch (per the eval set methodology:
   // 100% required on no-show recovery cases + fleet capacity guardrail).
   critical: boolean;
   assertions: EvalAssertion[];

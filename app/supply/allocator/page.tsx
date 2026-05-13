@@ -85,7 +85,7 @@ export default function AllocatorPage() {
         </div>
         <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
           <Link
-            href="/supply/allocator/evals"
+            href="/evals/allocator"
             style={{
               fontSize: 11,
               color: "#22D3EE",

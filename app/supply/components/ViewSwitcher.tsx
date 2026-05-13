@@ -7,10 +7,12 @@ const TABS: { href: string; label: string }[] = [
   { href: "/", label: "Rider" },
   { href: "/supply", label: "Supply" },
   { href: "/supply/allocator", label: "Allocator" },
+  { href: "/evals", label: "Evals" },
 ];
 
 function isActive(href: string, pathname: string): boolean {
   if (href === "/") return pathname === "/";
+  if (href === "/evals") return pathname.startsWith("/evals");
   if (href === "/supply/allocator") return pathname.startsWith("/supply/allocator");
   if (href === "/supply") return pathname === "/supply";
   return false;
@@ -18,7 +20,7 @@ function isActive(href: string, pathname: string): boolean {
 
 export function ViewSwitcher() {
   const pathname = usePathname();
-  const isSupply = pathname.startsWith("/supply");
+  const isSupply = pathname.startsWith("/supply") || pathname.startsWith("/evals");
 
   return (
     <div

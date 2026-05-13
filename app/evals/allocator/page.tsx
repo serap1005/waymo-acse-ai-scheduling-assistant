@@ -1,19 +1,15 @@
 "use client";
 
+import { EVAL_CASES } from "@/app/supply/allocator/lib/evalCases";
+import { runEvalCase } from "@/app/supply/allocator/lib/runEvalCase";
+import type { EvalResult } from "@/app/supply/allocator/lib/schemas";
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { EVAL_CASES } from "../lib/evalCases";
-import { runEvalCase } from "../lib/runEvalCase";
-import type { EvalResult } from "../lib/schemas";
 import { EvalCaseRow } from "./components/EvalCaseRow";
-import {
-  EvalFilters,
-  type CategoryFilter,
-  type StatusFilter,
-} from "./components/EvalFilters";
+import { EvalFilters, type CategoryFilter, type StatusFilter } from "./components/EvalFilters";
 import { EvalSummaryBar } from "./components/EvalSummaryBar";
 
-export default function EvalRunnerPage() {
+export default function AllocatorEvalsPage() {
   const [results, setResults] = useState<Map<string, EvalResult>>(new Map());
   const [runningCaseId, setRunningCaseId] = useState<string | null>(null);
   const [runAllActive, setRunAllActive] = useState(false);
@@ -66,96 +62,32 @@ export default function EvalRunnerPage() {
   }, [categoryFilter, statusFilter, results]);
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        background: "#050813",
-        color: "#E2E8F0",
-        padding: "14px 20px 24px",
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-      }}
-    >
-      <header
-        style={{
-          marginBottom: 14,
-          display: "flex",
-          alignItems: "baseline",
-          justifyContent: "space-between",
-          gap: 16,
-          flexWrap: "wrap",
-        }}
-      >
+    <main style={{ minHeight: "100vh", background: "#050813", color: "#E2E8F0", padding: "14px 20px 24px", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}>
+      <header style={{ marginBottom: 14, display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" }}>
-          <Link
-            href="/supply/allocator"
-            style={{
-              fontSize: 11,
-              color: "#22D3EE",
-              letterSpacing: "0.18em",
-              textTransform: "uppercase",
-              fontWeight: 700,
-              textDecoration: "none",
-            }}
-          >
-            ← Allocator
+          <Link href="/evals" style={{ fontSize: 11, color: "#22D3EE", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700, textDecoration: "none" }}>
+            ← Evals
           </Link>
-          <span
-            style={{
-              fontSize: 11,
-              color: "#22D3EE",
-              letterSpacing: "0.25em",
-              textTransform: "uppercase",
-              fontWeight: 800,
-            }}
-          >
-            Waymo · Allocator
+          <span style={{ fontSize: 11, color: "#22D3EE", letterSpacing: "0.25em", textTransform: "uppercase", fontWeight: 800 }}>
+            Allocator agent
           </span>
           <span style={{ fontSize: 16, fontWeight: 700, color: "#F1F5F9" }}>
             Eval runner · {EVAL_CASES.length} cases
           </span>
         </div>
-        <div
-          style={{
-            fontSize: 10,
-            color: "#64748B",
-            fontWeight: 600,
-            letterSpacing: "0.1em",
-            textTransform: "uppercase",
-          }}
-        >
+        <div style={{ fontSize: 10, color: "#64748B", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase" }}>
           Launch gate: ≥90% overall · 100% critical
         </div>
       </header>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <EvalSummaryBar
-          cases={EVAL_CASES}
-          results={results}
-          runAllActive={runAllActive}
-          onRunAll={handleRunAll}
-          onClear={handleClear}
-        />
+        <EvalSummaryBar cases={EVAL_CASES} results={results} runAllActive={runAllActive} onRunAll={handleRunAll} onClear={handleClear} />
 
-        <EvalFilters
-          category={categoryFilter}
-          status={statusFilter}
-          onCategoryChange={setCategoryFilter}
-          onStatusChange={setStatusFilter}
-        />
+        <EvalFilters category={categoryFilter} status={statusFilter} onCategoryChange={setCategoryFilter} onStatusChange={setStatusFilter} />
 
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {filteredCases.length === 0 ? (
-            <div
-              style={{
-                padding: "24px 14px",
-                background: "#0B1020",
-                border: "1px dashed #1E293B",
-                borderRadius: 12,
-                textAlign: "center",
-                color: "#64748B",
-                fontSize: 12,
-              }}
-            >
+            <div style={{ padding: "24px 14px", background: "#0B1020", border: "1px dashed #1E293B", borderRadius: 12, textAlign: "center", color: "#64748B", fontSize: 12 }}>
               No cases match the current filters.
             </div>
           ) : (
@@ -166,9 +98,7 @@ export default function EvalRunnerPage() {
                 result={results.get(c.id)}
                 isRunning={c.id === runningCaseId}
                 expanded={c.id === expandedCaseId}
-                onToggleExpand={() =>
-                  setExpandedCaseId((prev) => (prev === c.id ? null : c.id))
-                }
+                onToggleExpand={() => setExpandedCaseId((prev) => (prev === c.id ? null : c.id))}
                 onRun={() => handleRun(c.id)}
                 disabled={runAllActive}
               />
@@ -177,18 +107,8 @@ export default function EvalRunnerPage() {
         </div>
       </div>
 
-      <footer
-        style={{
-          marginTop: 16,
-          fontSize: 9,
-          color: "#475569",
-          letterSpacing: "0.05em",
-          lineHeight: 1.5,
-        }}
-      >
-        Eval cases assert programmatically against the agent&apos;s structured output plus the three
-        hard constraints validated server-side. Cases run sequentially (~3-5s each) to stay under
-        the per-IP rate limit. Results are in-memory for this session.
+      <footer style={{ marginTop: 16, fontSize: 9, color: "#475569", letterSpacing: "0.05em", lineHeight: 1.5 }}>
+        Eval cases assert programmatically against the agent&apos;s structured output plus the three hard constraints validated server-side. Cases run sequentially (~3-5s each) to stay under the per-IP rate limit. Results are in-memory for this session.
       </footer>
     </main>
   );

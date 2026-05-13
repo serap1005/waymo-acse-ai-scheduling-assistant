@@ -8,7 +8,7 @@
 //
 // Categories: baseline | no_show | disruption | fleet_constraint | new_market | edge
 //
-// Critical cases (must pass for launch, per Logan's methodology):
+// Critical cases (must pass for launch, per the eval set methodology):
 //   - 5, 6, 7, 8  (no-show recovery)
 //   - 15          (fleet capacity guardrail)
 // All others are non-critical (failures inform iteration, not block launch).
