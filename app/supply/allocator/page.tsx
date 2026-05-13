@@ -83,8 +83,23 @@ export default function AllocatorPage() {
             Supply Allocation Agent · test bench
           </span>
         </div>
-        <div style={{ fontSize: 10, color: "#64748B", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase" }}>
-          Claude Sonnet · tool-use · prompt-cached
+        <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
+          <Link
+            href="/supply/allocator/evals"
+            style={{
+              fontSize: 11,
+              color: "#22D3EE",
+              letterSpacing: "0.15em",
+              textTransform: "uppercase",
+              fontWeight: 700,
+              textDecoration: "none",
+            }}
+          >
+            Eval runner →
+          </Link>
+          <div style={{ fontSize: 10, color: "#64748B", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase" }}>
+            Claude Sonnet · tool-use · prompt-cached
+          </div>
         </div>
       </header>
 
@@ -120,8 +135,8 @@ export default function AllocatorPage() {
             <AllocatorEmpty variant="error" message={error} />
           ) : isRunning ? (
             <AllocatorEmpty variant="loading" />
-          ) : response && currentInput ? (
-            <OutputViewer input={currentInput} response={response} />
+          ) : response ? (
+            <OutputViewer response={response} />
           ) : (
             <AllocatorEmpty />
           )}
