@@ -14,6 +14,7 @@ import type { PanelKind } from "../lib/types";
 
 export interface PanelHandle {
   getVehicleNodes(): (SVGGElement | null)[];
+  getUserVehicleNodes(): (SVGGElement | null)[];
 }
 
 interface Props {
@@ -31,8 +32,10 @@ export const Panel = forwardRef<PanelHandle, Props>(function Panel(
   ref,
 ) {
   const vehicleNodes = useRef<(SVGGElement | null)[]>([]);
+  const userVehicleNodes = useRef<(SVGGElement | null)[]>([]);
   useImperativeHandle(ref, () => ({
     getVehicleNodes: () => vehicleNodes.current,
+    getUserVehicleNodes: () => userVehicleNodes.current,
   }));
 
   const filterId = `glow-${panelKind}`;
@@ -247,6 +250,22 @@ export const Panel = forwardRef<PanelHandle, Props>(function Panel(
           >
             <circle r={5.5} fill="#6B7280" opacity={0.35} filter={`url(#${vehicleGlowId})`} />
             <circle r={3.2} fill="#6B7280" />
+          </g>
+        ))}
+
+        {/* User-scheduled ride vehicles — one per user corridor. Driven by
+            the parent's rAF loop based on the schedule's departure time. */}
+        {userCorridors.map((uc, i) => (
+          <g
+            key={`user-${uc.id}`}
+            ref={(el) => {
+              userVehicleNodes.current[i] = el;
+            }}
+            transform={`translate(${uc.from.cx}, ${uc.from.cy})`}
+          >
+            <circle r={6} fill="#6B7280" opacity={0.45} filter={`url(#${vehicleGlowId})`} />
+            <circle r={3.6} fill="#6B7280" />
+            <circle r={5.2} fill="none" stroke="#FB923C" strokeWidth={1} opacity={0.85} />
           </g>
         ))}
       </svg>
