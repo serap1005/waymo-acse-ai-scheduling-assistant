@@ -224,16 +224,31 @@ export default function SupplyPage() {
             Los Angeles · Supply view
           </span>
         </div>
-        <div
-          style={{
-            fontSize: 10,
-            color: "#64748B",
-            fontWeight: 600,
-            letterSpacing: "0.1em",
-            textTransform: "uppercase",
-          }}
-        >
-          Simulated · 50% adoption
+        <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
+          <a
+            href="/supply/allocator"
+            style={{
+              fontSize: 11,
+              color: "#22D3EE",
+              letterSpacing: "0.15em",
+              textTransform: "uppercase",
+              fontWeight: 700,
+              textDecoration: "none",
+            }}
+          >
+            Allocator agent →
+          </a>
+          <div
+            style={{
+              fontSize: 10,
+              color: "#64748B",
+              fontWeight: 600,
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+            }}
+          >
+            Simulated · 50% adoption
+          </div>
         </div>
       </header>
 
