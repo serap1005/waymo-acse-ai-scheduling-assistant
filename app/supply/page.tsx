@@ -14,7 +14,11 @@ import {
   interpolateKpi,
   interpolateVehicle,
 } from "./lib/simulation";
-import { rideToCorridor, useScheduledRides } from "./lib/scheduleStore";
+import {
+  computeUserVehiclePosition,
+  rideToCorridor,
+  useScheduledRides,
+} from "./lib/scheduleStore";
 import { STATE_COLOR } from "./lib/types";
 
 const LOOP_MS = 30_000;
@@ -124,6 +128,23 @@ export default function SupplyPage() {
       }
     }
 
+    // User-scheduled vehicles: one per user corridor. Sit at origin pre-departure,
+    // traverse the corridor during the ~30-min ride window, park at destination after.
+    const userNodes = rightPanelRef.current?.getUserVehicleNodes();
+    if (userNodes) {
+      for (let i = 0; i < userCorridors.length; i++) {
+        const node = userNodes[i];
+        if (!node) continue;
+        const { x, y, state } = computeUserVehiclePosition(userCorridors[i], t);
+        node.setAttribute("transform", `translate(${x.toFixed(2)}, ${y.toFixed(2)})`);
+        const color = STATE_COLOR[state];
+        const c = node.children;
+        if (c[0]) (c[0] as SVGCircleElement).setAttribute("fill", color);
+        if (c[1]) (c[1] as SVGCircleElement).setAttribute("fill", color);
+        // Third circle (orange ring) is static — don't touch its stroke.
+      }
+    }
+
     // KPIs
     const od = interpolateKpi(sim.kpis.ondemand, t);
     const cp = interpolateKpi(sim.kpis.commutepass, t);
@@ -203,16 +224,31 @@ export default function SupplyPage() {
             Los Angeles · Supply view
           </span>
         </div>
-        <div
-          style={{
-            fontSize: 10,
-            color: "#64748B",
-            fontWeight: 600,
-            letterSpacing: "0.1em",
-            textTransform: "uppercase",
-          }}
-        >
-          Simulated · 50% adoption
+        <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
+          <a
+            href="/supply/allocator"
+            style={{
+              fontSize: 11,
+              color: "#22D3EE",
+              letterSpacing: "0.15em",
+              textTransform: "uppercase",
+              fontWeight: 700,
+              textDecoration: "none",
+            }}
+          >
+            Allocator agent →
+          </a>
+          <div
+            style={{
+              fontSize: 10,
+              color: "#64748B",
+              fontWeight: 600,
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+            }}
+          >
+            Simulated · 50% adoption
+          </div>
         </div>
       </header>
 

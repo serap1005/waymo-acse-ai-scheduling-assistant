@@ -85,6 +85,40 @@ Chronological. Every decision, every rework, with rationale.
 **Decision:** Code under `app/supply/`, docs under `docs/supply/`. Shared `layout.tsx` and `globals.css` not modified by Logan. Joint demo route at `app/demo/` is deferred and optional.
 **Rationale:** Clean namespace separation. Next.js App Router segments mean `/supply` is fully isolated from `/`. iframes are an option for the joint view but only as a fallback.
 
+### 2026-05-13 — Supply Allocation Agent: spec docs drafted (awaiting Logan sign-off before build)
+**New workstream:** stand up an LLM-based optimization agent at `/supply/allocator` that takes structured fleet/demand JSON and returns structured allocation decisions per the product spec Logan attached. Not a chatbot — structured JSON in, structured JSON out, with hard numerical constraints (on-demand floor 0.15, corridor cap 0.60, reassignment SLA 4 min).
+
+**Spec docs written for review:**
+- `docs/supply/allocator/system-prompt.md` — the canonical agent prompt (~1,800 tokens), restructured for LLM consumption and instructing tool use.
+- `docs/supply/allocator/schemas.md` — TypeScript types for input/output + tool definition + server-side constraint checks. LLM unreliability on numerical floors is handled by post-validation in the API route (failures surface as red badges, not silent retries).
+- `docs/supply/allocator/eval-plan.md` — three-layer eval framework (hard constraints + scenario assertions + LLM-as-judge) and the runner UI design at `/supply/allocator/evals`. Deferred build until Logan supplies eval data.
+- `docs/supply/specs/active/003-supply-allocation-agent.md` — combined plan + impl spec. Architecture: tool-use to enforce JSON output, prompt caching for cost, no PII/injection guardrails (input is structured not prose), 5 hand-built sample scenarios for v1, map viz reusing `lib/la.ts`.
+
+**Coordination notes:** reuses Sera's `ANTHROPIC_API_KEY` and `@anthropic-ai/sdk` — no new deps. Doesn't touch `app/layout.tsx` or Sera's files. ViewSwitcher unchanged; allocator is reachable via a link from `/supply`.
+
+### 2026-05-13 — User vehicle: active between commutes (Logan correction)
+**Problem:** The first cut had the user-scheduled vehicle sitting idle at origin/destination between the morning ride window. That's the OPPOSITE of the story — Commute Pass = your car is always working, it just knows when to be where for you. Idle = wasted supply = the failure mode the demo argues against.
+
+**Fix:** `computeUserVehiclePosition()` now models a five-phase day:
+1. **Early morning** (6 AM → pre-position start): vehicle does revenue work near the *origin* neighborhood — drifting between points within the hood, cycling between `with_passenger` and `dispatched`. Never `idle`.
+2. **Pre-position** (~15 sim-min before departure): drift in from the edge of the origin neighborhood to its center, state `dispatched`.
+3. **Pickup traversal** (departure → arrival): along the corridor, `with_passenger`. The user's actual ride.
+4. **Mid-day** (arrival → 6:30 PM): work near *destination* neighborhood, same drift+state-cycle pattern.
+5. **Return reposition** (6:30 PM → 9 PM): head back toward origin while still running rides — ready for tomorrow's pickup.
+
+The `workAroundHood()` helper handles drift + state cycling within a neighborhood, seeded per-corridor so two scheduled rides don't lock-step. Same wobble formula as the baseline fleet so the vehicle reads as part of the fleet, not a special case.
+
+### 2026-05-13 — User-scheduled vehicle on the map
+**Problem Logan identified:** Adding a schedule drew the orange corridor but no vehicle actually traveled along it at the user's departure time. The visualization showed the *intent* (the line) but not the *outcome* (a Waymo doing the ride). Undermined the demo's whole pitch.
+
+**Fix:** Each user-scheduled corridor now spawns a dedicated vehicle on the right panel:
+- `parseTimeToSimT()` converts `"8:30 AM"` etc. to a normalized 0..1 sim-time.
+- `computeUserVehiclePosition()` returns position + state for a given sim-time `t`: idle at origin pre-departure, `with_passenger` along the corridor during a ~30-sim-minute window, idle at destination after arrival.
+- `Panel` exposes `getUserVehicleNodes()` via the imperative handle; renders one extra `<g>` per user corridor, including a thin orange ring around the dot so it's recognizable as "your scheduled ride" without breaking the fleet's normal color semantics.
+- `page.tsx` rAF loop updates user-vehicle transforms + fill on every frame.
+
+**Why same-palette + orange ring:** the dot itself uses the standard `idle`/`with_passenger` colors so it reads as a regular Waymo doing its job. The orange ring (matching the corridor) marks it as "yours." Color stays meaningful per Rams.
+
 ### 2026-05-10 — Phase 2 linkage (Logan-side build)
 **Goal:** surface user-created schedules from Sera's chat inside the `/supply` view so the demo tells one continuous story — user creates schedule, fleet pre-positions for it, deadhead reduction visible. See `docs/supply/specs/active/002-phase-2-linkage.md` for the full spec.
 
