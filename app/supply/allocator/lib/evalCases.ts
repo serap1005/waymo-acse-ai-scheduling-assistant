@@ -8,7 +8,7 @@
 //
 // Categories: baseline | no_show | disruption | fleet_constraint | new_market | edge
 //
-// Critical cases (must pass for launch, per Logan's methodology):
+// Critical cases (must pass for launch, per the eval set methodology):
 //   - 5, 6, 7, 8  (no-show recovery)
 //   - 15          (fleet capacity guardrail)
 // All others are non-critical (failures inform iteration, not block launch).
@@ -919,29 +919,52 @@ const CASE_9: EvalCase = {
     market_maturity_days: 365,
   },
   critical: false,
+  // Pass criteria (per eval set): All subscriber pickups met on time;
+  // event-area on-demand ETA does not exceed 2x normal for that corridor.
   assertions: [
     {
-      name: "Event corridor (C9) gets aggressive on-demand repositioning",
-      check: (output) => {
-        const toC9 = output.vehicle_assignments.filter(
-          (a) =>
-            (a.action === "reposition_to_staging" || a.action === "release_to_on_demand") &&
-            a.target_corridor === "C9",
+      name: "All subscriber (scheduled) pickups met on time (100% ETA compliance)",
+      check: (output, input) => {
+        const scheduledAssignments = output.vehicle_assignments.filter(
+          (a) => a.action === "assign_to_scheduled" && a.assigned_ride_id,
         );
-        return toC9.length >= 4
-          ? ok(`${toC9.length} vehicles routed to C9 event corridor`)
-          : fail(`Only ${toC9.length} vehicles routed to C9 — expected ≥4 for event surge.`);
+        if (scheduledAssignments.length === 0) {
+          return fail("No scheduled assignments emitted; expected all subscriber pickups served.");
+        }
+        const late = scheduledAssignments.filter((a) => {
+          const r = input.scheduled_rides.find((x) => x.ride_id === a.assigned_ride_id);
+          return r ? r.minutes_until_pickup - a.estimated_arrival_minutes < -2 : false;
+        });
+        return late.length === 0
+          ? ok(`${scheduledAssignments.length}/${scheduledAssignments.length} subscriber pickups on time.`)
+          : fail(
+              `${late.length}/${scheduledAssignments.length} subscriber pickups late — event surge cannot break commitments.`,
+            );
       },
     },
-    assertScheduledEtaCompliance(2),
-    assertOnDemandFloor,
     {
-      name: "Active disruption acknowledged in disruption_response",
+      name: "Event-area (C9) on-demand ETA ≤ 2x baseline",
+      check: (output) => {
+        const c9 = output.corridor_impacts.find((c) => c.corridor_id === "C9");
+        if (!c9) {
+          return fail(`C9 missing from corridor_impacts — event corridor not modeled.`);
+        }
+        // 2x baseline = +100% delta.
+        return c9.eta_delta_vs_baseline_pct <= 1.0
+          ? ok(`C9 ETA delta +${(c9.eta_delta_vs_baseline_pct * 100).toFixed(0)}% (≤ 2x baseline).`)
+          : fail(
+              `C9 ETA delta +${(c9.eta_delta_vs_baseline_pct * 100).toFixed(0)}% (> 2x baseline) — event surge not controlled.`,
+            );
+      },
+    },
+    {
+      name: "Active disruption acknowledged",
       check: (output) =>
         output.disruption_response.active_disruptions >= 1
           ? ok(`active_disruptions = ${output.disruption_response.active_disruptions}`)
           : fail(`active_disruptions = 0 despite event in input.`),
     },
+    assertOnDemandFloor,
   ],
 };
 
@@ -992,25 +1015,46 @@ const CASE_10: EvalCase = {
     market_maturity_days: 365,
   },
   critical: false,
+  // Pass criteria (per eval set): On-demand ETA near event ≤ 8 min;
+  // no scheduled rides are affected (none exist in that window).
   assertions: [
-    assertScheduledEtaCompliance(2),
-    assertOnDemandFloor,
-    assertCorridorCaps,
     {
-      name: "C2 scheduled rides not dropped for event surge",
+      name: "On-demand ETA near event corridor (C2) ≤ 8 min",
+      check: (output) => {
+        const c2 = output.corridor_impacts.find((c) => c.corridor_id === "C2");
+        if (!c2) {
+          return fail(`Event corridor C2 missing from corridor_impacts.`);
+        }
+        return c2.predicted_on_demand_eta_minutes <= 8.0
+          ? ok(`C2 predicted on-demand ETA = ${c2.predicted_on_demand_eta_minutes.toFixed(1)}m (≤ 8m).`)
+          : fail(
+              `C2 predicted on-demand ETA = ${c2.predicted_on_demand_eta_minutes.toFixed(1)}m (> 8m) — aggressive reposition expected.`,
+            );
+      },
+    },
+    {
+      name: "Scheduled rides not affected by event surge",
       check: (output, input) => {
         const c2Scheduled = input.scheduled_rides.filter((r) => r.pickup_corridor === "C2");
+        if (c2Scheduled.length === 0) {
+          // Match the spec's "no scheduled rides exist in that window" framing.
+          return ok("No scheduled rides in event corridor — criterion vacuously satisfied.");
+        }
         const c2Served = c2Scheduled.filter((r) =>
           output.vehicle_assignments.some(
             (a) => a.assigned_ride_id === r.ride_id && a.action === "assign_to_scheduled",
           ),
         );
-        const ratio = c2Scheduled.length === 0 ? 1 : c2Served.length / c2Scheduled.length;
-        return ratio >= 0.8
-          ? ok(`${c2Served.length}/${c2Scheduled.length} C2 scheduled rides served (${(ratio * 100).toFixed(0)}%)`)
-          : fail(`Only ${(ratio * 100).toFixed(0)}% of C2 scheduled rides assigned — event surge overrode commitments.`);
+        const ratio = c2Served.length / c2Scheduled.length;
+        return ratio >= 0.9
+          ? ok(`${c2Served.length}/${c2Scheduled.length} C2 scheduled rides served (${(ratio * 100).toFixed(0)}%).`)
+          : fail(
+              `Only ${(ratio * 100).toFixed(0)}% of C2 scheduled rides served — event surge displacing commitments.`,
+            );
       },
     },
+    assertOnDemandFloor,
+    assertCorridorCaps,
   ],
 };
 
@@ -1061,15 +1105,53 @@ const CASE_11: EvalCase = {
     market_maturity_days: 365,
   },
   critical: false,
+  // Pass criteria (per eval set): Rerouted ETAs communicated to riders within
+  // 2 min of closure detection; no scheduled rides marked as missed due to the closure.
   assertions: [
     {
-      name: "Road closure → ≥ 1 rerouted ride OR ETA adjustments communicated",
-      check: (output) => {
+      name: "ETA adjustments communicated for closure-affected scheduled rides",
+      check: (output, input) => {
+        const c3Scheduled = input.scheduled_rides.filter(
+          (r) => r.pickup_corridor === "C3" || r.dropoff_corridor === "C3",
+        ).length;
         const rerouted = output.disruption_response.rerouted_rides;
         const adjusted = output.disruption_response.eta_adjustments_communicated;
+        // The 2-min communication latency is operational (the allocator output is
+        // a snapshot, not a timeline) — we verify that adjustments/reroutes exist
+        // and cover the affected scheduled rides. The <2 min latency is deferred
+        // to the LLM-as-judge runner against runtime telemetry.
+        if (c3Scheduled === 0) {
+          return ok("No scheduled rides touch C3; reroute/adjustment criterion vacuous.");
+        }
         return rerouted + adjusted >= 1
-          ? ok(`rerouted=${rerouted}, eta_adjustments=${adjusted}`)
-          : fail(`No rerouted rides nor ETA adjustments communicated despite road closure on C3.`);
+          ? ok(
+              `${rerouted} rerouted + ${adjusted} ETA adjustments communicated (C3 affects ${c3Scheduled} scheduled rides).`,
+            )
+          : fail(
+              `${c3Scheduled} scheduled rides touch closed C3 corridor, but rerouted=0 and eta_adjustments_communicated=0.`,
+            );
+      },
+    },
+    {
+      name: "No scheduled rides marked missed due to closure (ETA compliance preserved)",
+      check: (output, input) => {
+        const assignments = output.vehicle_assignments.filter(
+          (a) => a.action === "assign_to_scheduled" && a.assigned_ride_id,
+        );
+        const missed = assignments.filter((a) => {
+          const r = input.scheduled_rides.find((x) => x.ride_id === a.assigned_ride_id);
+          if (!r) return false;
+          // "Missed" = ETA later than pickup with no realistic reroute window.
+          return r.minutes_until_pickup - a.estimated_arrival_minutes < -5;
+        });
+        return missed.length === 0
+          ? ok(`No scheduled rides missed (${assignments.length} assignments checked).`)
+          : fail(
+              `${missed.length} scheduled ride(s) effectively missed due to closure: ${missed
+                .slice(0, 3)
+                .map((a) => a.assigned_ride_id)
+                .join(", ")}`,
+            );
       },
     },
     {
@@ -1077,7 +1159,9 @@ const CASE_11: EvalCase = {
       check: (output) =>
         output.disruption_response.active_disruptions === 1
           ? ok(`active_disruptions = 1`)
-          : fail(`active_disruptions = ${output.disruption_response.active_disruptions} (expected 1)`),
+          : fail(
+              `active_disruptions = ${output.disruption_response.active_disruptions} (expected 1).`,
+            ),
     },
     assertOnDemandFloor,
   ],
@@ -1131,15 +1215,19 @@ const CASE_12: EvalCase = {
     market_maturity_days: 365,
   },
   critical: false,
+  // Pass criteria (per eval set): Scheduled ETAs still met despite longer
+  // repositioning drives; model does not simply accept late arrivals.
   assertions: [
+    assertScheduledEtaCompliance(2),
     {
-      name: "Speed compensation applied for weather",
+      name: "Speed compensation applied (model not silently accepting late arrivals)",
       check: (output) =>
         output.disruption_response.speed_compensation_applied
           ? ok(`speed_compensation_applied = true`)
-          : fail(`speed_compensation_applied = false despite 20% weather-driven speed reduction.`),
+          : fail(
+              `speed_compensation_applied = false despite 20% weather-driven speed reduction — model accepting late arrivals.`,
+            ),
     },
-    assertScheduledEtaCompliance(3), // slightly relaxed tolerance under weather
     assertOnDemandFloor,
   ],
 };
@@ -1200,29 +1288,63 @@ const CASE_13: EvalCase = {
     market_maturity_days: 365,
   },
   critical: false,
+  // Pass criteria (per eval set): ≥ 90% of scheduled pickups met within 5 min
+  // of target; on-demand ETA degradation flagged to ops if > 2x baseline.
   assertions: [
-    assertScheduledEtaCompliance(3),
+    {
+      name: "≥ 90% of scheduled pickups met within 5 min of target",
+      check: (output, input) => {
+        const scheduledAssignments = output.vehicle_assignments.filter(
+          (a) => a.action === "assign_to_scheduled" && a.assigned_ride_id,
+        );
+        if (scheduledAssignments.length === 0) {
+          return fail("No scheduled assignments emitted.");
+        }
+        const onTime = scheduledAssignments.filter((a) => {
+          const r = input.scheduled_rides.find((x) => x.ride_id === a.assigned_ride_id);
+          return r ? r.minutes_until_pickup - a.estimated_arrival_minutes >= -5 : false;
+        });
+        const pct = onTime.length / scheduledAssignments.length;
+        return pct >= 0.9
+          ? ok(
+              `${onTime.length}/${scheduledAssignments.length} scheduled pickups within 5m (${(pct * 100).toFixed(1)}%).`,
+            )
+          : fail(
+              `Only ${(pct * 100).toFixed(1)}% (${onTime.length}/${scheduledAssignments.length}) within 5m — below 90% threshold under compound disruption.`,
+            );
+      },
+    },
+    {
+      name: "On-demand ETA > 2x baseline flagged to ops team",
+      check: (output) => {
+        const breaches = output.corridor_impacts.filter(
+          (c) => c.eta_delta_vs_baseline_pct > 1.0,
+        );
+        if (breaches.length === 0) {
+          return ok(`No corridor above 2x baseline; flag not required.`);
+        }
+        const flagged = breaches.every((c) =>
+          output.tradeoff_summary.capacity_warnings.some(
+            (w) => w.corridor_id === c.corridor_id && w.severity === "high",
+          ),
+        );
+        return flagged
+          ? ok(
+              `${breaches.length} corridor(s) > 2x baseline; all flagged as high-severity warnings.`,
+            )
+          : fail(
+              `${breaches.length} corridor(s) > 2x baseline (${breaches.map((b) => b.corridor_id).join(", ")}) — not all surfaced as high-severity warnings.`,
+            );
+      },
+    },
     {
       name: "Active disruption count = 2",
       check: (output) =>
         output.disruption_response.active_disruptions === 2
           ? ok(`active_disruptions = 2`)
-          : fail(`active_disruptions = ${output.disruption_response.active_disruptions} (expected 2).`),
-    },
-    {
-      name: "Corridor > 2x baseline ETA escalated as high-severity warning",
-      check: (output) => {
-        const c3 = output.corridor_impacts.find((c) => c.corridor_id === "C3");
-        if (!c3 || c3.eta_delta_vs_baseline_pct < 1.0) {
-          return ok(`C3 not above 2x baseline in agent's view; warning not required.`);
-        }
-        const highWarn = output.tradeoff_summary.capacity_warnings.find(
-          (w) => w.corridor_id === "C3" && w.severity === "high",
-        );
-        return highWarn
-          ? ok(`High-severity warning surfaced for C3 (${highWarn.warning_type}).`)
-          : fail(`C3 at ${(c3.eta_delta_vs_baseline_pct * 100).toFixed(0)}% over baseline — no high-severity warning.`);
-      },
+          : fail(
+              `active_disruptions = ${output.disruption_response.active_disruptions} (expected 2).`,
+            ),
     },
     assertOnDemandFloor,
   ],
@@ -1268,23 +1390,13 @@ const CASE_14: EvalCase = {
     market_maturity_days: 365,
   },
   critical: false,
+  // Pass criteria (per eval set): Scheduled ETAs met; on-demand ETA increases
+  // by ≤ 15% (proportional to fleet reduction, not amplified).
   assertions: [
+    assertScheduledEtaCompliance(2),
+    assertOnDemandEtaDelta(0.15),
     assertOnDemandFloor,
     assertCorridorCaps,
-    assertScheduledEtaCompliance(2),
-    {
-      name: "Tight buffer surfaced if on_demand_reserve_pct ≤ 0.18",
-      check: (output) => {
-        const pct = output.fleet_state_after.on_demand_reserve_pct;
-        if (pct > 0.18) return ok(`Buffer healthy at ${(pct * 100).toFixed(1)}%; no early warning required.`);
-        const warned = output.tradeoff_summary.capacity_warnings.some(
-          (w) => w.warning_type === "on_demand_floor_risk",
-        );
-        return warned
-          ? ok(`Reserve at ${(pct * 100).toFixed(1)}%; on_demand_floor_risk warning present.`)
-          : fail(`Reserve at ${(pct * 100).toFixed(1)}% — should warn at ≤ 18% threshold.`);
-      },
-    },
   ],
 };
 
@@ -1326,33 +1438,34 @@ const CASE_15: EvalCase = {
     market_maturity_days: 365,
   },
   critical: true,
+  // Pass criteria (per eval set): Scheduled ETAs met; on-demand availability
+  // guardrail (≥ 15% fleet reserved) is not violated; system flags to ops
+  // that corridor cap is nearly reached.
   assertions: [
+    assertScheduledEtaCompliance(2),
     assertOnDemandFloor,
-    assertCorridorCaps,
     {
-      name: "On-demand floor risk surfaced when reserve ≤ 18%",
+      name: "Corridor cap warning surfaced when corridor approaches the cap",
       check: (output) => {
-        const pct = output.fleet_state_after.on_demand_reserve_pct;
-        const warned = output.tradeoff_summary.capacity_warnings.some(
-          (w) => w.warning_type === "on_demand_floor_risk",
+        const nearCap = output.corridor_impacts.filter(
+          (c) => c.corridor_cap_usage_pct >= 0.5,
         );
-        if (pct > 0.18) {
-          return ok(`Reserve healthy at ${(pct * 100).toFixed(1)}%; no warning needed.`);
+        if (nearCap.length === 0) {
+          return ok(`No corridor ≥ 50% cap usage; flag not required.`);
         }
+        const warned = output.tradeoff_summary.capacity_warnings.some(
+          (w) => w.warning_type === "corridor_cap_risk",
+        );
         return warned
-          ? ok(`Reserve at ${(pct * 100).toFixed(1)}% with on_demand_floor_risk warning.`)
-          : fail(`Reserve at ${(pct * 100).toFixed(1)}% — expected on_demand_floor_risk warning.`);
+          ? ok(
+              `${nearCap.length} corridor(s) near cap (max ${(Math.max(...nearCap.map((c) => c.corridor_cap_usage_pct)) * 100).toFixed(1)}%); corridor_cap_risk flagged.`,
+            )
+          : fail(
+              `${nearCap.length} corridor(s) ≥ 50% of cap (${nearCap.map((c) => `${c.corridor_id}=${(c.corridor_cap_usage_pct * 100).toFixed(0)}%`).join(", ")}) — no corridor_cap_risk warning.`,
+            );
       },
     },
-    {
-      name: "Recommendation surfaces the on-demand vs. scheduled tradeoff",
-      check: (output) => {
-        const rec = output.tradeoff_summary.recommendation.toLowerCase();
-        return /on.demand|floor|capacity|reserve|tradeoff/.test(rec)
-          ? ok(`Recommendation discusses capacity tradeoff.`)
-          : fail(`Recommendation should name the on-demand vs scheduled tradeoff explicitly.`);
-      },
-    },
+    assertCorridorCaps,
   ],
 };
 
@@ -1397,12 +1510,16 @@ const CASE_16: EvalCase = {
     market_maturity_days: 12,
   },
   critical: false,
+  // Pass criteria (per eval set): Scheduled ETAs met; on-demand positioning
+  // uses conservative, geographically distributed defaults rather than
+  // borrowed city-specific patterns.
+  // NOTE: "borrowed city-specific patterns" is partly qualitative — full
+  // detection requires LLM-as-judge inspection of the recommendation rationale.
+  // We approximate via geographic-spread check + recommendation keywords.
   assertions: [
-    assertOnDemandFloor,
-    assertCorridorCaps,
-    assertRecommendationMentions("insufficient data", "thin", "scheduled commitments", "conservative", "new market"),
+    assertScheduledEtaCompliance(2),
     {
-      name: "Idle vehicles distributed evenly (not clustered in 1–2 corridors)",
+      name: "On-demand repositioning geographically distributed (≥ 3 corridors)",
       check: (output) => {
         const counts = new Map<string, number>();
         for (const a of output.vehicle_assignments) {
@@ -1411,15 +1528,42 @@ const CASE_16: EvalCase = {
           }
         }
         const corridors = Array.from(counts.keys());
-        if (corridors.length === 0) return ok("No repositioning emitted; nothing to imbalance.");
+        if (corridors.length === 0) {
+          return fail("No repositioning emitted; new-market expectation is conservative spread.");
+        }
         if (corridors.length < 3) {
           return fail(
-            `Repositioning concentrated in ${corridors.length} corridor(s): ${corridors.join(", ")}. New-market expectation is geographic spread.`,
+            `Repositioning concentrated in ${corridors.length} corridor(s): ${corridors.join(", ")}. New-market expectation is geographic spread across ≥ 3 corridors.`,
           );
         }
-        return ok(`Repositioning spread across ${corridors.length} corridors.`);
+        return ok(`Repositioning spread across ${corridors.length} corridors: ${corridors.join(", ")}.`);
       },
     },
+    {
+      name: "Recommendation acknowledges thin data / conservative defaults (no borrowed patterns)",
+      // Qualitative: LLM-as-judge should verify the model doesn't cite
+      // Phoenix/LA-specific demand patterns. We do a keyword check as proxy.
+      check: (output) => {
+        const rec = (output.tradeoff_summary.recommendation || "").toLowerCase();
+        const positiveSignals = ["thin", "insufficient", "conservative", "new market", "scheduled commitments", "cold start", "limited data"];
+        const negativeSignals = ["phoenix", "los angeles", "la pattern"];
+        const positives = positiveSignals.filter((k) => rec.includes(k));
+        const negatives = negativeSignals.filter((k) => rec.includes(k));
+        if (positives.length === 0) {
+          return fail(
+            `Recommendation lacks new-market framing. Got: "${output.tradeoff_summary.recommendation.slice(0, 160)}…"`,
+          );
+        }
+        if (negatives.length > 0) {
+          return fail(
+            `Recommendation references other-city patterns (${negatives.join(", ")}) — should not borrow.`,
+          );
+        }
+        return ok(`New-market framing present: ${positives.join(", ")}.`);
+      },
+    },
+    assertOnDemandFloor,
+    assertCorridorCaps,
   ],
 };
 
@@ -1470,17 +1614,35 @@ const CASE_17: EvalCase = {
     market_maturity_days: 18,
   },
   critical: false,
+  // Pass criteria (per eval set): Scheduled ETAs met; model accuracy (predicted
+  // vs. actual demand per corridor) improves measurably week-over-week as data
+  // accumulates.
+  // NOTE: Week-over-week accuracy improvement cannot be tested from a single
+  // snapshot — it requires longitudinal comparison across multiple eval runs.
+  // That dimension is deferred to the LLM-as-judge runner / offline analysis.
+  // Snapshot-level proxy: model should still trust scheduled signals and
+  // surface limited-data framing.
   assertions: [
-    assertOnDemandFloor,
-    assertCorridorCaps,
+    assertScheduledEtaCompliance(2),
+    assertRecommendationMentions(
+      "insufficient data",
+      "thin",
+      "scheduled commitments",
+      "conservative",
+      "new market",
+      "limited data",
+    ),
     {
       name: "Active disruption count = 1",
       check: (output) =>
         output.disruption_response.active_disruptions === 1
           ? ok(`active_disruptions = 1`)
-          : fail(`active_disruptions = ${output.disruption_response.active_disruptions} (expected 1).`),
+          : fail(
+              `active_disruptions = ${output.disruption_response.active_disruptions} (expected 1).`,
+            ),
     },
-    assertRecommendationMentions("insufficient data", "thin", "scheduled commitments", "conservative", "new market"),
+    assertOnDemandFloor,
+    assertCorridorCaps,
   ],
 };
 
@@ -1524,26 +1686,38 @@ const CASE_18: EvalCase = {
     market_maturity_days: 365,
   },
   critical: false,
+  // Pass criteria (per eval set): Deadheading miles for return repositioning
+  // are ≤ baseline (model doesn't wait until evening to start moving vehicles
+  // back); evening scheduled ETAs are not degraded by morning clustering.
+  // NOTE: This case's input scenario is generic — the asymmetric morning
+  // suburb→downtown flow is approximated via the deadheading rate + ETA checks.
+  // True morning-to-evening longitudinal effect requires multi-snapshot eval.
   assertions: [
-    assertOnDemandFloor,
-    assertCorridorCaps,
-    assertScheduledEtaCompliance(2),
     {
-      name: "No capacity warnings on a clean day",
-      check: (output) =>
-        output.tradeoff_summary.capacity_warnings.length === 0
-          ? ok(`0 capacity warnings (expected on a clean day).`)
+      name: "Deadheading rate ≤ baseline (≤ 12% assumed for healthy operations)",
+      check: (output) => {
+        const rate = output.tradeoff_summary.deadheading_rate_pct;
+        // Baseline deadheading ~12% for healthy operations; agent should not
+        // exceed this by lazily waiting until evening to reposition empties.
+        return rate <= 0.12
+          ? ok(`deadheading_rate_pct = ${(rate * 100).toFixed(1)}% (≤ 12% baseline).`)
           : fail(
-              `${output.tradeoff_summary.capacity_warnings.length} warnings on a day with no disruptions/floor pressure: ${output.tradeoff_summary.capacity_warnings.map((w) => w.warning_type).join(", ")}`,
-            ),
+              `deadheading_rate_pct = ${(rate * 100).toFixed(1)}% (> 12% baseline) — likely waited too long to reposition.`,
+            );
+      },
     },
+    assertScheduledEtaCompliance(2),
     {
       name: "No hallucinated disruptions",
       check: (output) =>
         output.disruption_response.active_disruptions === 0
           ? ok(`active_disruptions = 0`)
-          : fail(`active_disruptions = ${output.disruption_response.active_disruptions} (expected 0).`),
+          : fail(
+              `active_disruptions = ${output.disruption_response.active_disruptions} (expected 0).`,
+            ),
     },
+    assertOnDemandFloor,
+    assertCorridorCaps,
   ],
 };
 

@@ -26,9 +26,11 @@ export default function AllocatorPage() {
   };
 
   const handleRun = async (input: AllocatorInput) => {
-    setIsRunning(true);
+    // Clear previous output immediately so the loading state replaces stale results.
+    setResponse(null);
     setError(null);
     setCurrentInput(input);
+    setIsRunning(true);
     try {
       const result = await callAllocator(input);
       setResponse(result);
@@ -81,8 +83,23 @@ export default function AllocatorPage() {
             Supply Allocation Agent · test bench
           </span>
         </div>
-        <div style={{ fontSize: 10, color: "#64748B", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase" }}>
-          Claude Sonnet · tool-use · prompt-cached
+        <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
+          <Link
+            href="/evals/allocator"
+            style={{
+              fontSize: 11,
+              color: "#22D3EE",
+              letterSpacing: "0.15em",
+              textTransform: "uppercase",
+              fontWeight: 700,
+              textDecoration: "none",
+            }}
+          >
+            Eval runner →
+          </Link>
+          <div style={{ fontSize: 10, color: "#64748B", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase" }}>
+            Claude Sonnet · tool-use · prompt-cached
+          </div>
         </div>
       </header>
 
@@ -91,10 +108,18 @@ export default function AllocatorPage() {
           display: "grid",
           gridTemplateColumns: "minmax(420px, 1fr) 2fr",
           gap: 14,
-          alignItems: "stretch",
+          alignItems: "start",
         }}
       >
-        <div style={{ minWidth: 0 }}>
+        <div
+          style={{
+            minWidth: 0,
+            position: "sticky",
+            top: 14,
+            maxHeight: "calc(100vh - 28px)",
+            display: "flex",
+          }}
+        >
           <InputEditor
             selectedSampleId={selectedSampleId}
             jsonValue={jsonValue}
@@ -107,11 +132,11 @@ export default function AllocatorPage() {
 
         <div style={{ minWidth: 0 }}>
           {error ? (
-            <AllocatorEmpty message={`Error: ${error}`} />
-          ) : response && currentInput ? (
-            <OutputViewer input={currentInput} response={response} />
+            <AllocatorEmpty variant="error" message={error} />
           ) : isRunning ? (
-            <AllocatorEmpty message="Calling the agent — Sonnet typically takes 2–5 seconds for a full allocation cycle…" />
+            <AllocatorEmpty variant="loading" />
+          ) : response ? (
+            <OutputViewer response={response} />
           ) : (
             <AllocatorEmpty />
           )}

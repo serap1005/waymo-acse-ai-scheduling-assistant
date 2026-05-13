@@ -1,13 +1,13 @@
 "use client";
 
-import type { AllocatorInput, AllocatorResponse } from "../lib/schemas";
-import { AssignmentMap } from "./AssignmentMap";
+import type { AllocatorResponse } from "../lib/schemas";
+import { AssignmentsSummary } from "./AssignmentsSummary";
 import { ConstraintBadges } from "./ConstraintBadges";
+import { CorridorImpactsTable } from "./CorridorImpactsTable";
 import { JsonViewer } from "./JsonViewer";
 import { TradeoffCard } from "./TradeoffCard";
 
 interface Props {
-  input: AllocatorInput;
   response: AllocatorResponse;
 }
 
@@ -23,7 +23,7 @@ function formatTokens(n: number): string {
   return n.toLocaleString();
 }
 
-export function OutputViewer({ input, response }: Props) {
+export function OutputViewer({ response }: Props) {
   const { decision, constraint_checks, latency_ms, tokens } = response;
   const totalInputTokens = tokens.input + tokens.cached_input + tokens.cache_creation_input;
   const cacheHit = tokens.cached_input > 0;
@@ -32,7 +32,8 @@ export function OutputViewer({ input, response }: Props) {
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <TradeoffCard output={decision} />
       <ConstraintBadges checks={constraint_checks} />
-      <AssignmentMap input={input} output={decision} />
+      <CorridorImpactsTable impacts={decision.corridor_impacts} />
+      <AssignmentsSummary assignments={decision.vehicle_assignments} />
 
       <div
         style={{

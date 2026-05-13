@@ -64,7 +64,7 @@ export function InjectButton({
       style={{
         position: "fixed",
         top: 44,
-        right: 250,
+        right: 460,
         zIndex: 9998,
         display: "flex",
         gap: 4,
