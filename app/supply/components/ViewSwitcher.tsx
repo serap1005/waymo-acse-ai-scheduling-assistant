@@ -6,7 +6,15 @@ import { usePathname } from "next/navigation";
 const TABS: { href: string; label: string }[] = [
   { href: "/", label: "Rider" },
   { href: "/supply", label: "Supply" },
+  { href: "/supply/allocator", label: "Allocator" },
 ];
+
+function isActive(href: string, pathname: string): boolean {
+  if (href === "/") return pathname === "/";
+  if (href === "/supply/allocator") return pathname.startsWith("/supply/allocator");
+  if (href === "/supply") return pathname === "/supply";
+  return false;
+}
 
 export function ViewSwitcher() {
   const pathname = usePathname();
@@ -33,34 +41,21 @@ export function ViewSwitcher() {
       }}
     >
       {TABS.map((tab) => {
-        const active =
-          tab.href === "/supply"
-            ? pathname.startsWith("/supply")
-            : pathname === "/";
+        const active = isActive(tab.href, pathname);
         return (
           <Link
             key={tab.href}
             href={tab.href}
             style={{
-              padding: "10px 24px",
+              padding: "10px 22px",
               borderRadius: 999,
               fontSize: 13,
               fontWeight: 700,
               letterSpacing: "0.06em",
               textTransform: "uppercase",
               textDecoration: "none",
-              background: active
-                ? isSupply
-                  ? "#FFFFFF"
-                  : "#22D3EE"
-                : "transparent",
-              color: active
-                ? isSupply
-                  ? "#0B1020"
-                  : "#0B1020"
-                : isSupply
-                ? "#94A3B8"
-                : "#94A3B8",
+              background: active ? (isSupply ? "#FFFFFF" : "#22D3EE") : "transparent",
+              color: active ? "#0B1020" : "#94A3B8",
               transition: "background 120ms ease, color 120ms ease",
             }}
           >

@@ -43,7 +43,7 @@ export function InputEditor({
         border: "1px solid #1E293B",
         borderRadius: 14,
         padding: 16,
-        height: "100%",
+        flex: 1,
         minHeight: 0,
       }}
     >

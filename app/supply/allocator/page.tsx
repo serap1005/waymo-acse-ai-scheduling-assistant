@@ -26,9 +26,11 @@ export default function AllocatorPage() {
   };
 
   const handleRun = async (input: AllocatorInput) => {
-    setIsRunning(true);
+    // Clear previous output immediately so the loading state replaces stale results.
+    setResponse(null);
     setError(null);
     setCurrentInput(input);
+    setIsRunning(true);
     try {
       const result = await callAllocator(input);
       setResponse(result);
@@ -91,10 +93,18 @@ export default function AllocatorPage() {
           display: "grid",
           gridTemplateColumns: "minmax(420px, 1fr) 2fr",
           gap: 14,
-          alignItems: "stretch",
+          alignItems: "start",
         }}
       >
-        <div style={{ minWidth: 0 }}>
+        <div
+          style={{
+            minWidth: 0,
+            position: "sticky",
+            top: 14,
+            maxHeight: "calc(100vh - 28px)",
+            display: "flex",
+          }}
+        >
           <InputEditor
             selectedSampleId={selectedSampleId}
             jsonValue={jsonValue}
@@ -107,11 +117,11 @@ export default function AllocatorPage() {
 
         <div style={{ minWidth: 0 }}>
           {error ? (
-            <AllocatorEmpty message={`Error: ${error}`} />
+            <AllocatorEmpty variant="error" message={error} />
+          ) : isRunning ? (
+            <AllocatorEmpty variant="loading" />
           ) : response && currentInput ? (
             <OutputViewer input={currentInput} response={response} />
-          ) : isRunning ? (
-            <AllocatorEmpty message="Calling the agent — Sonnet typically takes 2–5 seconds for a full allocation cycle…" />
           ) : (
             <AllocatorEmpty />
           )}
