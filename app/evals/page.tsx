@@ -131,7 +131,7 @@ export default function EvalsHubPage() {
         minHeight: "100vh",
         background: "#050813",
         color: "#E2E8F0",
-        padding: "14px 20px 32px",
+        padding: "96px 20px 32px",
         fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       }}
     >

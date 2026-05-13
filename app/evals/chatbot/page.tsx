@@ -61,7 +61,7 @@ export default function ChatbotEvalsPage() {
   }, [categoryFilter, statusFilter, results]);
 
   return (
-    <main style={{ minHeight: "100vh", background: "#050813", color: "#E2E8F0", padding: "14px 20px 24px", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}>
+    <main style={{ minHeight: "100vh", background: "#050813", color: "#E2E8F0", padding: "96px 20px 24px", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}>
       <header style={{ marginBottom: 14, display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" }}>
           <Link href="/evals" style={{ fontSize: 11, color: "#22D3EE", letterSpacing: "0.18em", textTransform: "uppercase", fontWeight: 700, textDecoration: "none" }}>
