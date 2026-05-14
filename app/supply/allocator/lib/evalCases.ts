@@ -388,28 +388,46 @@ const CASE_2: EvalCase = {
   assertions: [
     assertScheduledEtaCompliance(2),
     {
-      name: "Repositioning begins ≥ 30 min before first evening scheduled pickup",
+      name: "Repositioning lead time ≥ 30 min for eligible rides",
+      // Checks the agent's reposition_to_staging actions emit appropriate lead
+      // time. Eligible rides = those with minutes_until_pickup >= 30 (the only
+      // ones the prompt instructs to reposition for; rides closer than 30 min
+      // out should get direct assign_to_scheduled). For each eligible ride that
+      // got a reposition, the agent's estimated_arrival_minutes must give a
+      // lead of >= 30 min (i.e. arrival_minutes <= ride.minutes_until_pickup - 30).
       check: (output, input) => {
-        const firstPickup = Math.min(
-          ...input.scheduled_rides.map((r) => r.minutes_until_pickup),
-        );
-        // Repositioning actions surfaced now (T=0) implicitly start at "now",
-        // so we check that they exist while the first pickup is still ≥30 min out.
+        const ridesById = new Map(input.scheduled_rides.map((r) => [r.ride_id, r]));
+        const eligibleRides = input.scheduled_rides.filter((r) => r.minutes_until_pickup >= 30);
         const repositioning = output.vehicle_assignments.filter(
           (a) => a.action === "reposition_to_staging",
         );
+        if (eligibleRides.length === 0) {
+          return ok(`No eligible rides (>= 30 min out); reposition assertion vacuously satisfied.`);
+        }
         if (repositioning.length === 0) {
           return fail(
-            `No reposition_to_staging actions emitted; first pickup is ${firstPickup}m out.`,
+            `No reposition_to_staging actions emitted; ${eligibleRides.length} eligible rides have >= 30m runway.`,
           );
         }
-        return firstPickup >= 30
-          ? ok(
-              `${repositioning.length} reposition actions started; first pickup ${firstPickup}m out (≥ 30m lead).`,
-            )
-          : fail(
-              `Repositioning starting only ${firstPickup}m before first pickup (needed ≥ 30m lead).`,
-            );
+        // Find any reposition with insufficient lead vs. its targeted ride.
+        const bad = repositioning.filter((a) => {
+          if (!a.assigned_ride_id) return false;
+          const ride = ridesById.get(a.assigned_ride_id);
+          if (!ride) return false;
+          const lead = ride.minutes_until_pickup - a.estimated_arrival_minutes;
+          return lead < 30;
+        });
+        if (bad.length > 0) {
+          const sample = bad[0];
+          const ride = ridesById.get(sample.assigned_ride_id ?? "");
+          const lead = ride ? ride.minutes_until_pickup - sample.estimated_arrival_minutes : 0;
+          return fail(
+            `${bad.length}/${repositioning.length} reposition actions have lead < 30m (e.g. vehicle ${sample.vehicle_id} → ride ${sample.assigned_ride_id}: ${lead}m lead).`,
+          );
+        }
+        return ok(
+          `${repositioning.length} reposition_to_staging actions emitted, all with >= 30m lead to their target rides.`,
+        );
       },
     },
     assertOnDemandFloor,

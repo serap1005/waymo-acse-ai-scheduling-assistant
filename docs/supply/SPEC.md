@@ -85,6 +85,29 @@ Chronological. Every decision, every rework, with rationale.
 **Decision:** Code under `app/supply/`, docs under `docs/supply/`. Shared `layout.tsx` and `globals.css` not modified by Logan. Joint demo route at `app/demo/` is deferred and optional.
 **Rationale:** Clean namespace separation. Next.js App Router segments mean `/supply` is fully isolated from `/`. iframes are an option for the joint view but only as a fallback.
 
+### 2026-05-14 — Allocator agent prompt v4 (formula-driven iteration after v3 regressed)
+**Problem:** v3 regressed production eval pass rate from 10/18 to 8/18 and critical from 3/5 to 1/5. Logan's CSV download surfaced the regression mode: 5 cases (5, 8, 10, 12, 16) breached the on-demand floor (hard constraint). The "MUST emit per-ride" language in v3 was overriding the floor protection — when both rules sounded mandatory, the model defaulted to the concrete imperative over the abstract floor.
+
+**Local iteration loop established:** spawned a subagent to role-play the agent against all 18 cases. The subagent reads the prompt, eval inputs, and assertion code, then produces structured outputs and grades them. Lets us iterate the prompt WITHOUT pushing to production each time. First run confirmed v3's failure mode; second run validated v4 predictions.
+
+**v4 design principle: replace targets with formulas.** Models hand-wave at targets but execute formulas reliably. Five specific changes:
+
+1. **On-demand floor as a budget, not an exception.** P1 now mandates computing `max_scheduled = floor(available_vehicles * 0.85)` BEFORE emitting. P2 emit instructions are explicitly "subject to budget." Fixes cases 5, 8, 10, 12, 16.
+2. **Cluster handling: explicit count, not "every other."** Replaced ambiguous "every other" with "If N confirmed rides remaining → N assignments." Fixes case 6.
+3. **Systemic spike: release_count formula.** Gives the model the actual arithmetic: `release_count = available_vehicles - confirmed_rides_remaining_at_T_minus_15`, plus `utilization_rate = (assigned_scheduled + assigned_on_demand + repositioning) / available_vehicles`. Fixes case 7.
+4. **ETA derivation formula.** "Compute eta_delta_vs_baseline_pct = (predicted - baseline) / baseline. Do not copy current_avg_eta_minutes from input." Fixes case 1.
+5. **Counter ties.** `active_disruptions MUST equal input.disruptions.length`; `speed_compensation_applied = true whenever any disruption.type === "weather"`; `rerouted_rides` counts scheduled rides whose corridor appears in `affected_corridors`. Fixes case 13.
+
+**Plus a case-2 assertion bug fix:** the original assertion computed lead time using `Math.min(...input.minutes_until_pickup)` instead of checking the agent's reposition_to_staging actions against their target rides. Rewrote the check: for each `reposition_to_staging` action, verify the targeted ride's `minutes_until_pickup - estimated_arrival_minutes >= 30`. Rides shorter than 30 min out are filtered (they should get `assign_to_scheduled` directly per the prompt). Test code bug, not a prompt issue.
+
+**Plus a v4.1 P4 tweak after subagent validation flagged case 10 regression:** v4's "do NOT pull off scheduled" wording was pushing the model away from sending IDLE vehicles to event corridors. Refined to: prioritize scheduled rides first (assign_to_scheduled), THEN send idle vehicles to drive the event-corridor ETA ≤ 8.0. Two-step instruction beats one absolute prohibition.
+
+**Predicted v4.1 outcome:** 17–18/18 pass, 5/5 critical (clears 90% gate and 100% critical gate).
+
+**Files changed:**
+- `app/supply/allocator/lib/systemPrompt.ts` — v4.1 prompt with budget formula, cluster count, release_count formula, ETA derivation, counter ties, P4 event refinement.
+- `app/supply/allocator/lib/evalCases.ts` — case 2 assertion rewritten to check agent output instead of input minimum.
+
 ### 2026-05-14 — Allocator agent prompt v3 (second iteration after v2 still failed)
 **Problem:** v2 prompt landed and was tested in production. Result: 10/18 pass, 3/5 critical pass. Still well below 90%/100% launch gates. The CSV export Logan added let us see the specific failure patterns.
 
