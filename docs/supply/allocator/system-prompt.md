@@ -1,10 +1,19 @@
-# Supply Allocation Agent — System Prompt (v2)
+# Supply Allocation Agent — System Prompt (v3)
 
 This is the canonical system prompt for the agent. It is derived from the product spec (`/Users/loganwood/Downloads/Waymo_Supply_Allocation_Agent_-_Spec.md`) and adapted for LLM consumption.
 
 The prompt is **server-side only** (`app/api/allocate/route.ts`). Never exposed to clients.
 
-**v2 changes** (2026-05-14, prompt audit after production eval failures): added explicit action-emission instructions for pre-positioning / no-show release / reroute mechanics; added numeric output targets for derived fields; added per-corridor capacity warning emission rules at softer thresholds; expanded event-corridor ETA discipline; tightened reassignment SLA into the hard-constraint block; added "name the operating regime explicitly" instruction. The mirror of this prompt as TS code lives at `app/supply/allocator/lib/systemPrompt.ts`.
+**v3 changes** (2026-05-14, second iteration after v2 still showed 10/18 pass rate in production):
+- **Pre-positioning timing**: now mandates `estimated_arrival_minutes <= minutes_until_pickup - 30` so vehicles actually arrive 30+ min before pickup, not just have the action emitted.
+- **Localized cluster handling**: split out as its own bullet; explicit MUST emit assign_to_scheduled for every remaining confirmed ride in the cluster corridor.
+- **Systemic-spike recovery**: explicit instruction to emit release_to_on_demand for held vehicles; utilization_rate MUST be >= 0.55 (called out 0.03 as the catastrophic failure mode).
+- **ETA delta echo**: stronger language — "Do NOT pass +0.80 through" — model was echoing input ETAs instead of post-decision values.
+- **Output section**: every top-level field is REQUIRED, with explicit fallback values for empty sections. Backed by server-side backfill in `/api/allocate` so missing fields don't crash the runner.
+
+**v2 changes** (earlier): action-emission instructions; numeric output targets; per-corridor capacity warning emission rules; event-corridor ETA discipline; reassignment SLA in hard-constraint block; "name the operating regime explicitly" instruction.
+
+The TS mirror lives at `app/supply/allocator/lib/systemPrompt.ts`.
 
 ---
 

@@ -86,7 +86,45 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const decision = toolUse.input as AllocatorOutput;
+    // Backfill any missing top-level fields with safe defaults. The tool schema
+    // marks every field required, but the API doesn't enforce this strictly on
+    // the way out — and we've observed the model occasionally omitting blocks.
+    // Backfilling lets downstream assertions run without crashes; the constraint
+    // checks then catch the actual quality issues.
+    const raw = (toolUse.input ?? {}) as Partial<AllocatorOutput>;
+    const decision: AllocatorOutput = {
+      timestamp: raw.timestamp ?? new Date().toISOString(),
+      decision_id: raw.decision_id ?? `dec-fallback-${Date.now()}`,
+      vehicle_assignments: Array.isArray(raw.vehicle_assignments) ? raw.vehicle_assignments : [],
+      fleet_state_after: raw.fleet_state_after ?? {
+        vehicles_assigned_scheduled: 0,
+        vehicles_assigned_on_demand: 0,
+        vehicles_repositioning: 0,
+        vehicles_idle: 0,
+        on_demand_reserve_pct: 0,
+        utilization_rate: 0,
+      },
+      corridor_impacts: Array.isArray(raw.corridor_impacts) ? raw.corridor_impacts : [],
+      no_show_handling: raw.no_show_handling ?? {
+        probable_no_shows: 0,
+        vehicles_released: 0,
+        avg_reassignment_time_minutes: 0,
+        pattern_detected: null,
+      },
+      tradeoff_summary: raw.tradeoff_summary ?? {
+        scheduled_eta_compliance_pct: 0,
+        on_demand_eta_impact_pct: 0,
+        deadheading_rate_pct: 0,
+        capacity_warnings: [],
+        recommendation: "(agent output incomplete — backfilled with defaults)",
+      },
+      disruption_response: raw.disruption_response ?? {
+        active_disruptions: 0,
+        rerouted_rides: 0,
+        eta_adjustments_communicated: 0,
+        speed_compensation_applied: false,
+      },
+    };
     const constraint_checks = checkConstraints(decision);
     const latency_ms = Date.now() - startedAt;
 
