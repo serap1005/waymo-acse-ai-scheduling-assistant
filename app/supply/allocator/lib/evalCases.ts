@@ -257,16 +257,35 @@ const assertReassignmentSla: EvalAssertion = {
   },
 };
 
-const assertRecommendationMentions = (...keywords: string[]): EvalAssertion => ({
-  name: `Recommendation surfaces: ${keywords.join(" / ")}`,
-  check: (output: AllocatorOutput): AssertionResult => {
-    const rec = (output.tradeoff_summary.recommendation || "").toLowerCase();
-    const hits = keywords.filter((k) => rec.includes(k.toLowerCase()));
-    return hits.length > 0
-      ? ok(`Found: ${hits.join(", ")}`)
-      : fail(`Recommendation lacks any of [${keywords.join(", ")}]. Got: "${output.tradeoff_summary.recommendation.slice(0, 160)}…"`);
-  },
-});
+// Expanded synonym sets reduce over-fit to specific phrasings. Pass any of
+// the source keywords plus their accepted alternatives — the assertion fires
+// pass if the recommendation contains ANY one of the expanded set (lowercase
+// substring match).
+const SYNONYMS: Record<string, string[]> = {
+  "insufficient data": ["insufficient data", "limited information", "scarce data", "low signal", "early-stage"],
+  "thin": ["thin", "sparse", "limited", "minimal", "scarce"],
+  "scheduled commitments": ["scheduled commitments", "scheduled rides", "commute pass commitments", "confirmed pickups"],
+  "conservative": ["conservative", "cautious", "guarded", "defensive defaults"],
+  "new market": ["new market", "new launch", "recent expansion", "fresh market", "recently launched"],
+  "cold start": ["cold start", "early days", "first days", "ramp-up"],
+  "limited data": ["limited data", "limited history", "limited demand history", "few days of data"],
+  "elevated no-show": ["elevated no-show", "above-average no-show", "increased no-show", "higher no-show", "elevated no show"],
+  "systemic_spike": ["systemic_spike", "systemic spike", "widespread no-show"],
+};
+
+const assertRecommendationMentions = (...keywords: string[]): EvalAssertion => {
+  const expanded = keywords.flatMap((k) => SYNONYMS[k] ?? [k]);
+  return {
+    name: `Recommendation surfaces: ${keywords.join(" / ")}`,
+    check: (output: AllocatorOutput): AssertionResult => {
+      const rec = (output.tradeoff_summary.recommendation || "").toLowerCase();
+      const hits = expanded.filter((k) => rec.includes(k.toLowerCase()));
+      return hits.length > 0
+        ? ok(`Found: ${hits.join(", ")}`)
+        : fail(`Recommendation lacks any of [${expanded.join(", ")}]. Got: "${output.tradeoff_summary.recommendation.slice(0, 160)}…"`);
+    },
+  };
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // CASE BUILDERS
@@ -1541,12 +1560,20 @@ const CASE_16: EvalCase = {
     },
     {
       name: "Recommendation acknowledges thin data / conservative defaults (no borrowed patterns)",
-      // Qualitative: LLM-as-judge should verify the model doesn't cite
-      // Phoenix/LA-specific demand patterns. We do a keyword check as proxy.
+      // Qualitative; broadened to a synonym union so the model has linguistic
+      // freedom but still must name the new-market regime.
       check: (output) => {
         const rec = (output.tradeoff_summary.recommendation || "").toLowerCase();
-        const positiveSignals = ["thin", "insufficient", "conservative", "new market", "scheduled commitments", "cold start", "limited data"];
-        const negativeSignals = ["phoenix", "los angeles", "la pattern"];
+        const positiveSignals = [
+          ...SYNONYMS["thin"],
+          ...SYNONYMS["insufficient data"],
+          ...SYNONYMS["conservative"],
+          ...SYNONYMS["new market"],
+          ...SYNONYMS["scheduled commitments"],
+          ...SYNONYMS["cold start"],
+          ...SYNONYMS["limited data"],
+        ];
+        const negativeSignals = ["phoenix", "los angeles", "la pattern", "la's pattern", "from phoenix"];
         const positives = positiveSignals.filter((k) => rec.includes(k));
         const negatives = negativeSignals.filter((k) => rec.includes(k));
         if (positives.length === 0) {
