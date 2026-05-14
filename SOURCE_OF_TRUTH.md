@@ -382,4 +382,308 @@ waymo-acse-ai-scheduling-assistant/
 
 ---
 
-*This document is the canonical specification for ACSE v1. Any changes to the system prompt, schema, pricing logic, or guardrail patterns must be reflected here before deployment.*
+# Part 2 — Supply Allocation Agent
+
+**Author:** Logan Wood, Product Manager
+**Last Updated:** May 2026
+**Status:** Production (v2 prompt, post-audit)
+
+This part of the document covers the **Supply Allocation Agent** — a second AI agent in the Commute Pass system that operates downstream of ACSE. Where ACSE captures *demand* (riders' scheduled commutes), the allocator decides *supply* (where vehicles should be, when, and which ride each vehicle serves). The two agents share the same Anthropic API key but otherwise live in separate routes, separate prompts, and separate eval suites.
+
+---
+
+## 11. Product Context (Allocator)
+
+### 11.1 Why This Exists
+
+ACSE converts spontaneous demand into scheduled, predictable demand. That signal is only valuable if the fleet acts on it. The Supply Allocation Agent closes that loop: every decision cycle, it ingests current fleet state + scheduled commitments + on-demand forecast + active disruptions, and emits a structured allocation decision — which vehicles reposition where, which scheduled rides get firm assignment, which vehicles release to the on-demand pool, what tradeoffs the operator should watch.
+
+The strategic argument: Commute Pass's flywheel (more habitual commuters → better forecasting → lower deadheading → shorter ETAs → more riders) only spins if the dispatch system actually translates schedule data into pre-positioning. A weak allocator turns scheduled rides into a static promise; a strong allocator turns them into a fleet-wide ETA improvement that benefits subscribers AND on-demand riders.
+
+### 11.2 What It Is
+
+The allocator is a **server-side LLM agent** (Claude Sonnet via Anthropic API) that runs at `/api/allocate`. It is NOT conversational — input is structured JSON, output is structured JSON enforced via Anthropic tool use. The agent operates in a single mode per cycle: ingest → reason against the 5-priority decision chain → emit a structured `AllocatorOutput` by calling the `emit_allocation_decision` tool.
+
+| Surface | Purpose |
+|---------|---------|
+| `/api/allocate` | The agent endpoint. Stateless POST handler; reuses ACSE's rate-limit pattern. |
+| `/supply/allocator` | Test bench UI — pick a sample scenario or paste custom JSON, run, inspect the decision. |
+| `/evals/allocator` | Eval runner — execute the 18-case eval suite against the live agent and grade. |
+
+### 11.3 Design Constraints
+
+- **Hard constraints are non-negotiable.** Three numerical floors — on-demand reserve ≥ 0.15, corridor cap ≤ 0.60, reassignment SLA ≤ 4 min — are validated server-side after the agent returns. Failures surface as red badges, never silent retries. LLMs are unreliable at numerical floors; we want to *see* when the agent breaks them.
+- **No PII / injection guardrails on this endpoint.** Input is structured JSON from internal systems, not user prose, so L1/L2/L3 patterns don't apply. Rate limiting (20 req/IP/60s) is reused from ACSE for parity.
+- **Prompt caching is mandatory.** The system prompt is ~3,200 tokens. Without caching, back-to-back decision cycles get expensive fast. `cache_control: { type: "ephemeral" }` caches for 5 min.
+- **No cross-city pattern transfer.** Each city is independent. Phoenix patterns are not Austin patterns. This is enforced in the prompt and tested in the new-market eval cases.
+
+---
+
+## 12. System Prompt (v2)
+
+The system prompt is the ground truth for the agent's behavior. **Server-side only** — never exposed in any client output. v2 was produced after a static audit of v1 against the 18 eval cases — see Section 16 for the audit findings.
+
+```
+You are Waymo's Supply Allocation Agent. You decide where vehicles should be and when, balancing pre-committed Commute Pass scheduled pickups against spontaneous on-demand ride requests.
+
+You are not a chatbot. You are an optimization agent: structured JSON in, structured JSON out, with numerical precision. Every decision has downstream consequences for rider experience, fleet utilization, and revenue. You must surface tradeoffs explicitly.
+
+## Hard constraints (NEVER violate)
+
+1. ON-DEMAND FLOOR: fleet_state_after.on_demand_reserve_pct must be >= 0.15. If an assignment would breach this, reject the assignment and add an entry to tradeoff_summary.capacity_warnings with warning_type="on_demand_floor_risk".
+2. CORRIDOR CAPS: No corridor_impacts[].corridor_cap_usage_pct may exceed 0.60. If a scheduled allocation would breach this, hold the vehicle in a neighboring corridor and flag with warning_type="corridor_cap_risk".
+3. REASSIGNMENT SLA: When you emit release_to_on_demand for a no-show vehicle, set no_show_handling.avg_reassignment_time_minutes to your best estimate of the actual reassignment time. This value must be <= 4.0 (target <= 3.0). Set no_show_handling.vehicles_released to the count of release_to_on_demand actions emitted for no-shows.
+
+## Decision priority (apply in order, earlier rules win)
+
+P1 — Hard constraints (above). Never trade away.
+P2 — Scheduled ride fulfillment. Pre-positioning MUST emit reposition_to_staging actions 30-45 min before pickup (or 36-54 min under 20% weather slowdown). No-show recovery MUST emit release_to_on_demand at T-5 with no confirmation; set avg_reassignment_time_minutes <= 3.0. Proactive release at historical_no_show_rate > 0.10. Systemic spike threshold: rolling no-show rate > 0.30.
+P3 — On-demand optimization. Idle vehicles distribute proportional to predicted_requests_next_30min, weighted by current/baseline ETA gap.
+P4 — Disruption response. Road closures: increment rerouted_rides per affected ride. Weather: extend pre-positioning windows multiplicatively, set speed_compensation_applied=true. Major events: drive event-corridor predicted ETA <= 8.0 min if no scheduled overlap.
+P5 — New market behavior (market_maturity_days < 30). Scheduled commitments are PRIMARY signal. Spread vehicles across ≥3 corridors. NO cross-city pattern transfer.
+
+## Tradeoff surfacing (required)
+
+Name the operating regime explicitly in tradeoff_summary.recommendation. When the input puts the fleet in a particular regime (new market with thin data, elevated no-show rate, systemic no-show spike, corridor cap stress, on-demand floor risk, compound disruption), the recommendation paragraph must explicitly name that regime by the conditions creating it.
+
+## Numeric output targets
+
+- deadheading_rate_pct: <= 0.12 healthy, <= 0.15 weekend.
+- utilization_rate: ~0.70 rush; >= 0.55 under systemic spike.
+- corridor_impacts[].predicted_on_demand_eta_minutes: post-decision ETA, NOT echo of input.
+- eta_delta_vs_baseline_pct: <= 0.10 baseline; <= 0.15 under 10% fleet reduction; <= 0.05 sparse.
+
+## Capacity warning emission rules
+
+Emit a SEPARATE entry per corridor per condition. No consolidation.
+
+- corridor_cap_usage_pct >= 0.50 → corridor_cap_risk, severity=medium (or high if >= 0.58).
+- on_demand_reserve_pct <= 0.18 → on_demand_floor_risk, severity=medium (or high if <= 0.16).
+- eta_delta_vs_baseline_pct > 1.0 → eta_degradation, severity=high.
+- eta_delta_vs_baseline_pct > 0.50 → eta_degradation, severity=medium.
+
+## Behavioral rules
+
+- No hallucinated demand. In new markets, prefer "insufficient data" over guesses.
+- No cross-city transfer.
+- No second-class non-subscribers.
+- Numerical precision: round floats to 2 decimal places. Percentages as [0.0, 1.0].
+- Audit trail: every vehicle_assignment[].reason cites the specific signal. "Optimization" is not a reason.
+
+## Output
+
+Return your decision by calling the emit_allocation_decision tool. Every field is required.
+```
+
+The canonical mirror lives in `docs/supply/allocator/system-prompt.md`. The TS code that loads the prompt is `app/supply/allocator/lib/systemPrompt.ts`.
+
+---
+
+## 13. Input / Output Schema
+
+The agent's I/O contract is enforced at two levels: TypeScript types (`app/supply/allocator/lib/schemas.ts`) for client-side validation, and a JSON Schema tool definition (`app/supply/allocator/lib/toolSchema.ts`) that Anthropic uses to enforce the model's output structure.
+
+### 13.1 Input — `AllocatorInput`
+
+```typescript
+{
+  city: string;
+  timestamp: string;          // ISO 8601
+  time_window: "morning_rush" | "midday" | "evening_rush" | "late_night";
+  day_type: "weekday" | "weekend" | "holiday" | "day_after_holiday";
+  fleet: {
+    total_vehicles: number;
+    available_vehicles: number;
+    vehicles: FleetVehicle[];
+  };
+  scheduled_rides: ScheduledRide[];
+  on_demand_forecast: { corridors: CorridorForecast[] };
+  disruptions: Disruption[];
+  subscription_density_pct: number;     // 0.0 – 1.0
+  historical_no_show_rate: number;      // 0.0 – 1.0
+  market_maturity_days: number;
+}
+```
+
+### 13.2 Output — `AllocatorOutput`
+
+```typescript
+{
+  timestamp: string;
+  decision_id: string;
+  vehicle_assignments: VehicleAssignment[];   // one per vehicle being acted on
+  fleet_state_after: {
+    vehicles_assigned_scheduled: number;
+    vehicles_assigned_on_demand: number;
+    vehicles_repositioning: number;
+    vehicles_idle: number;
+    on_demand_reserve_pct: number;            // must be >= 0.15
+    utilization_rate: number;
+  };
+  corridor_impacts: CorridorImpact[];         // per corridor
+  no_show_handling: {
+    probable_no_shows: number;
+    vehicles_released: number;
+    avg_reassignment_time_minutes: number;    // must be <= 4.0
+    pattern_detected: string | null;
+  };
+  tradeoff_summary: {
+    scheduled_eta_compliance_pct: number;
+    on_demand_eta_impact_pct: number;
+    deadheading_rate_pct: number;
+    capacity_warnings: CapacityWarning[];     // one entry per corridor per condition
+    recommendation: string;                   // one operator-readable paragraph
+  };
+  disruption_response: {
+    active_disruptions: number;
+    rerouted_rides: number;
+    eta_adjustments_communicated: number;
+    speed_compensation_applied: boolean;
+  };
+}
+```
+
+Full type definitions live in `app/supply/allocator/lib/schemas.ts`.
+
+### 13.3 Tool-Use Enforcement
+
+The agent doesn't free-text JSON. The API call uses `tools` + `tool_choice` to force the model to call a single tool, `emit_allocation_decision`, whose `input_schema` is the JSON Schema mirror of `AllocatorOutput`. This eliminates parse errors at the SDK boundary.
+
+---
+
+## 14. Server-Side Validation
+
+LLMs are unreliable at numerical floors. The API route post-validates the agent's output:
+
+```typescript
+function checkConstraints(decision: AllocatorOutput): ConstraintCheck[] {
+  return [
+    { rule: "on_demand_floor",   passed: decision.fleet_state_after.on_demand_reserve_pct >= 0.15, ... },
+    { rule: "corridor_caps",     passed: every corridor_cap_usage_pct <= 0.60, ... },
+    { rule: "reassignment_sla",  passed: no_show_handling.avg_reassignment_time_minutes <= 4.0, ... },
+  ];
+}
+```
+
+If any check fails, the response still returns the agent's output — failures surface in the UI as red badges so the operator (and future evals) can grade the agent's reliability on hard constraints. **We do not silently retry — that hides agent quality issues.**
+
+---
+
+## 15. Build Iteration Log (Allocator)
+
+### Iteration 1 — v1 prompt
+**Decision:** Single agent, single tool call per cycle, prompt caching from day one.
+**Rationale:** The product spec is explicit that this is an LLM agent with judgment and tradeoff articulation, not a deterministic optimization solver. A single Sonnet call with a tool-use schema is the right shape.
+**Result:** Agent shipped at /supply/allocator with 5 sample scenarios. Initial production eval runs failed widely.
+
+### Iteration 2 — v2 prompt (post-audit)
+**Trigger:** Production runs of the 18 eval cases showed widespread failures. Triggered a static audit of v1 against the eval assertions.
+
+**Audit findings — 6 systemic patterns:**
+1. Mental verbs ("begin repositioning", "release immediately", "reroute") never produced action emissions. The model interpreted them as mental verbs rather than mandates to emit specific `vehicle_assignment.action` values. Affected cases 2, 6, 8, 11.
+2. Numeric derived fields (deadhead, utilization, ETA delta) were unanchored. The prompt told the model what to do but never what *values* to emit. Affected cases 1, 3, 4, 7, 9, 10, 13, 14, 18.
+3. Proactive release missing at elevated-but-sub-systemic no-show rates. Failed case 8.
+4. Per-corridor capacity warnings only fired at hard 0.60 breach; assertions check at 0.50 cap and 2× baseline ETA. Affected cases 13, 15.
+5. Event-corridor ETA echoed input rather than reflecting post-decision state. Affected cases 9, 10, 13.
+6. Recommendation lacked regime-naming vocabulary. Affected cases 1, 16, 17.
+
+**Applied — 5 surgical prompt changes + 1 softened:**
+- P2 pre-positioning: MUST emit `reposition_to_staging` for confirmed rides 30-45 min out.
+- P2 no-show recovery: MUST emit `release_to_on_demand` AND set SLA field <= 3.0.
+- P2 proactive release at `historical_no_show_rate > 0.10`.
+- P4 road closures: increment `rerouted_rides` per affected ride.
+- P4 major events: explicit ETA target (<= 8.0 min, <= 1.0 delta).
+- P1 SLA: tightened with explicit field-set instruction.
+- New "Numeric output targets" section.
+- New "Capacity warning emission rules" section.
+- **Softened regime-naming change:** instruct the agent to "name the operating regime explicitly" without dictating specific substrings. Eval-side fix: `assertRecommendationMentions` now uses a `SYNONYMS` table — each canonical keyword maps to a synonym set. This avoids keyword over-fitting.
+
+**Known over-fit risks (accepted for v2, called out for follow-up):**
+- Numeric targets may produce confident lies (model emits target regardless of actual decision). Closed-loop sim would solve this; deferred.
+- Threshold-based warning emission at 0.50 cap will generate more warnings than ops will want in production. Recalibrate post-launch.
+- Event-corridor ETA target is cosmetic — model can't actually drive ETA, it just outputs a number.
+
+Full audit detail in `docs/supply/SPEC.md`.
+
+---
+
+## 16. Eval Set (18 Cases)
+
+The allocator's eval set is derived from the *Commute Pass Dispatch Model — Eval Set* spec (18 cases across 6 categories). Each case has:
+
+1. A full `AllocatorInput` JSON (fleet state, scheduled rides, forecast, disruptions).
+2. A set of programmatic assertions over the agent's structured output.
+3. A `critical` flag — critical cases must pass for launch.
+
+### 16.1 Categories and Counts
+
+| Category | Cases | Critical |
+|---|---|---|
+| Baseline & happy path | 1, 2, 3, 4 | — |
+| No-show scenarios | 5, 6, 7, 8 | All four |
+| Demand disruptions | 9, 10, 11, 12, 13 | — |
+| Fleet constraints | 14, 15 | Case 15 |
+| New market / cold start | 16, 17 | — |
+| Asymmetric / edge | 18 | — |
+| **Total** | **18** | **5** |
+
+### 16.2 Launch Gates
+
+- **≥ 90% overall pass rate** across the full 18 cases.
+- **100% pass rate on critical cases** (5, 6, 7, 8, 15). Hamel Husain methodology: pass/fail is binary per case; partial credit not awarded.
+
+### 16.3 Assertion Framework
+
+Three layers of grading:
+
+1. **Hard-constraint checks** (always run): identical to the server-side validation in Section 14. These are non-negotiable; failures count against the agent regardless of scenario.
+2. **Scenario-specific assertions**: per-case programmatic checks (e.g., "All 3 vehicles reassigned within 4 min" for case 6, or "Recommendation acknowledges thin data / conservative defaults" for case 16). Implemented as functions over `AllocatorOutput` in `app/supply/allocator/lib/evalCases.ts`.
+3. **LLM-as-judge (qualitative)**: deferred to a future runner. Today's runner uses substring + regex checks for recommendation language with a `SYNONYMS` table to avoid keyword over-fit. Qualitative dimensions (rider-notification latency, longitudinal accuracy, morning→evening linkage) are flagged in case comments as `LLM-as-judge TODO`.
+
+### 16.4 Runner UI
+
+`/evals/allocator` runs the 18 cases sequentially through the live agent at `/api/allocate`. Each case row shows pass/fail, the 3 hard-constraint checks, the scenario assertions with detail strings, and per-call latency + token usage. A "Download CSV" button exports the results as a flat table for offline review or assignment submission.
+
+The runner is sibling to the chatbot eval runner at `/evals/chatbot`, both reachable from the `/evals` hub.
+
+---
+
+## 17. File Structure (Allocator + Evals)
+
+```
+waymo-acse-ai-scheduling-assistant/
+├── app/
+│   ├── api/
+│   │   ├── chat/route.ts                       ← ACSE agent (Part 1)
+│   │   └── allocate/route.ts                   ← Allocator agent endpoint
+│   ├── supply/
+│   │   └── allocator/
+│   │       ├── page.tsx                        ← Test bench UI
+│   │       ├── components/                     ← TradeoffCard, ConstraintBadges, etc.
+│   │       └── lib/
+│   │           ├── systemPrompt.ts             ← Canonical v2 prompt
+│   │           ├── toolSchema.ts               ← JSON Schema for emit_allocation_decision
+│   │           ├── schemas.ts                  ← TypeScript I/O types
+│   │           ├── evalCases.ts                ← 18 eval cases + assertions
+│   │           ├── runEvalCase.ts              ← Runner helper
+│   │           ├── constraintChecks.ts         ← Server-side hard-constraint validators
+│   │           ├── sampleInputs.ts             ← 5 demo scenarios
+│   │           └── callAllocator.ts            ← Client-side fetch helper
+│   └── evals/
+│       ├── page.tsx                            ← Hub
+│       ├── allocator/page.tsx                  ← Allocator eval runner UI
+│       └── chatbot/                            ← Chatbot eval runner UI (ACSE)
+└── docs/
+    └── supply/
+        ├── SPEC.md                             ← Iteration log
+        ├── allocator/
+        │   ├── system-prompt.md                ← Canonical prompt mirror
+        │   ├── schemas.md                      ← I/O contract documentation
+        │   └── eval-plan.md                    ← Eval framework design
+        └── specs/active/
+            └── 003-supply-allocation-agent.md  ← Combined plan + impl spec
+```
+
+---
+
+*This document is the canonical specification for both ACSE v1 (Part 1) and the Supply Allocation Agent v2 (Part 2). Any changes to either agent's system prompt, schemas, or guardrail patterns must be reflected here before deployment.*
