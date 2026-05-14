@@ -1,5 +1,6 @@
 "use client";
 
+import { buildCsv, downloadCsv, isoTimestamp } from "@/app/evals/lib/downloadCsv";
 import type { ChatbotEvalCase } from "../lib/chatbotEvalCases";
 import type { ChatbotEvalResult } from "../lib/runChatbotEvalCase";
 
@@ -58,13 +59,61 @@ export function ChatbotEvalSummaryBar({ cases, results, runAllActive, onRunAll, 
           {runAllActive ? `Running… (${runCount}/${total})` : `▶ Run all ${total}`}
         </button>
         {runCount > 0 && !runAllActive && (
-          <button onClick={onClear} style={{ padding: "10px 14px", borderRadius: 10, background: "transparent", color: "#94A3B8", border: "1px solid #1E293B", fontSize: 12, fontWeight: 600, letterSpacing: "0.05em", cursor: "pointer" }}>
-            × Clear
-          </button>
+          <>
+            <button onClick={() => handleDownloadCsv(cases, results)} style={{ padding: "10px 14px", borderRadius: 10, background: "transparent", color: "#22D3EE", border: "1px solid #22D3EE66", fontSize: 12, fontWeight: 600, letterSpacing: "0.05em", cursor: "pointer" }}>
+              ↓ Download CSV
+            </button>
+            <button onClick={onClear} style={{ padding: "10px 14px", borderRadius: 10, background: "transparent", color: "#94A3B8", border: "1px solid #1E293B", fontSize: 12, fontWeight: 600, letterSpacing: "0.05em", cursor: "pointer" }}>
+              × Clear
+            </button>
+          </>
         )}
       </div>
     </div>
   );
+
+  function handleDownloadCsv(cases: ChatbotEvalCase[], results: Map<string, ChatbotEvalResult>) {
+    const header = [
+      "case_id",
+      "label",
+      "category",
+      "critical",
+      "user_message",
+      "status",
+      "assertions_passed",
+      "assertions_total",
+      "failed_details",
+      "response",
+      "latency_seconds",
+      "error",
+    ];
+    const rows = cases.map((c) => {
+      const r = results.get(c.id);
+      if (!r) {
+        return [c.id, c.label, c.category, c.critical, c.userMessage, "NOT_RUN", "", "", "", "", "", ""];
+      }
+      const assertionsPassed = r.assertions.filter((a) => a.pass).length;
+      const assertionsTotal = r.assertions.length;
+      const failed = r.assertions.filter((a) => !a.pass).map((a) => `${a.name}: ${a.detail}`).join(" | ");
+      const status = r.error ? "ERROR" : r.passed ? "PASS" : "FAIL";
+      return [
+        c.id,
+        c.label,
+        c.category,
+        c.critical,
+        c.userMessage,
+        status,
+        assertionsPassed,
+        assertionsTotal,
+        failed,
+        r.response,
+        (r.latencyMs / 1000).toFixed(2),
+        r.error ?? "",
+      ];
+    });
+    const csv = buildCsv(header, rows);
+    downloadCsv(`chatbot-evals-${isoTimestamp()}.csv`, csv);
+  }
 
   function Metric({ label, value, color, hint }: { label: string; value: string; color: string; hint?: string }) {
     return (

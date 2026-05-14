@@ -1,5 +1,6 @@
 "use client";
 
+import { buildCsv, downloadCsv, isoTimestamp } from "@/app/evals/lib/downloadCsv";
 import type { EvalCase, EvalResult } from "@/app/supply/allocator/lib/schemas";
 
 const LAUNCH_GATE_OVERALL = 0.90;
@@ -70,13 +71,72 @@ export function EvalSummaryBar({ cases, results, runAllActive, onRunAll, onClear
           {runAllActive ? `Running… (${runCount}/${total})` : `▶ Run all ${total}`}
         </button>
         {runCount > 0 && !runAllActive && (
-          <button onClick={onClear} style={{ padding: "10px 14px", borderRadius: 10, background: "transparent", color: "#94A3B8", border: "1px solid #1E293B", fontSize: 12, fontWeight: 600, letterSpacing: "0.05em", cursor: "pointer" }}>
-            × Clear
-          </button>
+          <>
+            <button onClick={() => handleDownloadCsv(cases, results)} style={{ padding: "10px 14px", borderRadius: 10, background: "transparent", color: "#22D3EE", border: "1px solid #22D3EE66", fontSize: 12, fontWeight: 600, letterSpacing: "0.05em", cursor: "pointer" }}>
+              ↓ Download CSV
+            </button>
+            <button onClick={onClear} style={{ padding: "10px 14px", borderRadius: 10, background: "transparent", color: "#94A3B8", border: "1px solid #1E293B", fontSize: 12, fontWeight: 600, letterSpacing: "0.05em", cursor: "pointer" }}>
+              × Clear
+            </button>
+          </>
         )}
       </div>
     </div>
   );
+
+  function handleDownloadCsv(cases: EvalCase[], results: Map<string, EvalResult>) {
+    const header = [
+      "case_id",
+      "label",
+      "category",
+      "critical",
+      "status",
+      "hard_constraints_passed",
+      "hard_constraints_total",
+      "assertions_passed",
+      "assertions_total",
+      "failed_details",
+      "latency_seconds",
+      "input_tokens",
+      "output_tokens",
+      "cached_tokens",
+      "error",
+    ];
+    const rows = cases.map((c) => {
+      const r = results.get(c.id);
+      if (!r) {
+        return [c.id, c.label, c.category, c.critical, "NOT_RUN", "", "", "", "", "", "", "", "", "", ""];
+      }
+      const hardPassed = r.hardConstraints.filter((h) => h.passed).length;
+      const hardTotal = r.hardConstraints.length;
+      const assertionsPassed = r.assertions.filter((a) => a.pass).length;
+      const assertionsTotal = r.assertions.length;
+      const failed = [
+        ...r.hardConstraints.filter((h) => !h.passed).map((h) => `${h.rule}: ${h.detail}`),
+        ...r.assertions.filter((a) => !a.pass).map((a) => `${a.name}: ${a.detail}`),
+      ].join(" | ");
+      const status = r.error ? "ERROR" : r.passed ? "PASS" : "FAIL";
+      return [
+        c.id,
+        c.label,
+        c.category,
+        c.critical,
+        status,
+        hardPassed,
+        hardTotal,
+        assertionsPassed,
+        assertionsTotal,
+        failed,
+        (r.latencyMs / 1000).toFixed(2),
+        r.tokens.input,
+        r.tokens.output,
+        r.tokens.cached_input,
+        r.error ?? "",
+      ];
+    });
+    const csv = buildCsv(header, rows);
+    downloadCsv(`allocator-evals-${isoTimestamp()}.csv`, csv);
+  }
 
   function Metric({ label, value, color, hint }: { label: string; value: string; color: string; hint?: string }) {
     return (
