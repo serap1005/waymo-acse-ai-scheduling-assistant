@@ -534,14 +534,16 @@ const CASE_4: EvalCase = {
   assertions: [
     assertScheduledEtaCompliance(3),
     {
-      name: "No measurable impact on on-demand availability (ETA delta ≤ 3%)",
+      name: "No measurable impact on on-demand availability (ETA delta ≤ 5%)",
+      // Relaxed from 3% to 5% — original threshold was flagged in the v2 audit
+      // (Risk #6) as unrealistically tight on late-night low-density conditions.
       check: (output) => {
         const worst = output.corridor_impacts.reduce(
           (m, c) => (c.eta_delta_vs_baseline_pct > m ? c.eta_delta_vs_baseline_pct : m),
           0,
         );
-        return worst <= 0.03
-          ? ok(`Worst corridor ETA delta: +${(worst * 100).toFixed(2)}% (≤ 3%, no measurable impact)`)
+        return worst <= 0.05
+          ? ok(`Worst corridor ETA delta: +${(worst * 100).toFixed(2)}% (≤ 5%, no measurable impact)`)
           : fail(
               `Worst corridor ETA delta: +${(worst * 100).toFixed(2)}% — sparse scheduled rides should not impact on-demand.`,
             );
