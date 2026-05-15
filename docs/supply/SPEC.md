@@ -85,6 +85,32 @@ Chronological. Every decision, every rework, with rationale.
 **Decision:** Code under `app/supply/`, docs under `docs/supply/`. Shared `layout.tsx` and `globals.css` not modified by Logan. Joint demo route at `app/demo/` is deferred and optional.
 **Rationale:** Clean namespace separation. Next.js App Router segments mean `/supply` is fully isolated from `/`. iframes are an option for the joint view but only as a fallback.
 
+### 2026-05-14 — Allocator agent v5 (API-side computed overrides + budget-as-shield reframe)
+**Problem:** v4.1 production results: 10/18 pass, 3/5 critical. Cases 14, 15 newly broke (model emitting 0 scheduled actions despite many confirmed rides in input). Cases 6, 9, 10, 13 still failing. Pattern: model is *unreliable at numerical fields it must track itself* — reports `active_disruptions=0` when input has 2; reports `on_demand_reserve_pct=0.00` while emitting zero scheduled actions (internally inconsistent).
+
+**v5 strategy: stop prompt-engineering the model into honesty. Let the API compute derivable fields server-side.**
+
+**API-side overrides** (`app/api/allocate/route.ts`):
+- `disruption_response.active_disruptions` = `input.disruptions.length` (always overwrite)
+- `disruption_response.speed_compensation_applied` = any input disruption has `type === "weather"` (always overwrite)
+- `disruption_response.rerouted_rides` = count of scheduled rides crossing affected corridors (if model didn't claim a positive count)
+- `fleet_state_after.on_demand_reserve_pct` = `(available - assigned_scheduled - repositioning) / available` (always recompute)
+- `fleet_state_after.utilization_rate` = `(assigned_scheduled + assigned_on_demand + repositioning) / available` (always recompute)
+- Vehicle counts (assigned_scheduled, assigned_on_demand, repositioning, idle) derived from `vehicle_assignments[]` array; fall back to model values only if counts are zero (sample inputs may have small assignment arrays)
+
+This converts "model lies about its own work" into "we read the assignments and compute the truth." Model judgment is preserved for creative decisions (the assignments themselves, corridor projections, recommendation prose).
+
+**Prompt v5 tweaks** (small additions, not a rewrite):
+- **Budget reframed as a SHIELD, not a target.** Added "MUST emit assign_to_scheduled for every confirmed ride with minutes_until_pickup < 30" to address cases 14, 15 emitting zero scheduled despite high density. Added a worked example: "78 rides, budget = 239 → budget does NOT bind; if you emit < 50 scheduled actions you've made an error."
+- **Cluster handling** now has a verbatim worked example (R900–R902 no-shows + R903–R904 confirmed → 5 total emissions) plus a sanity check ("if you emit 0 assign_to_scheduled for the cluster corridor, you've made an error"). Third iteration on case 6 — sanity check is the load-bearing addition.
+- **Corridor completeness rule** strengthened with explicit example listing C1–C5, C9 and a "missing the disruption corridor is a hard failure" callout. Targets case 10's missing-C2 failure.
+
+**Predicted v5 outcome (per subagent role-play validation):** 17/18 pass, 5/5 critical (clears both gates). Highest-risk cases: 6 (~60% conf — third iteration on same failure), 15 (~60% conf — high-density model anxiety), 10 (~55% conf — depends on event-corridor ETA control).
+
+**Files changed:**
+- `app/api/allocate/route.ts` — derivable-field computed overrides
+- `app/supply/allocator/lib/systemPrompt.ts` — budget-as-shield, worked example for cluster (R900–R904), corridor completeness reinforcement, case-15 high-density worked example
+
 ### 2026-05-14 — Allocator agent prompt v4 (formula-driven iteration after v3 regressed)
 **Problem:** v3 regressed production eval pass rate from 10/18 to 8/18 and critical from 3/5 to 1/5. Logan's CSV download surfaced the regression mode: 5 cases (5, 8, 10, 12, 16) breached the on-demand floor (hard constraint). The "MUST emit per-ride" language in v3 was overriding the floor protection — when both rules sounded mandatory, the model defaulted to the concrete imperative over the abstract floor.
 

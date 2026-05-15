@@ -86,23 +86,81 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Backfill any missing top-level fields with safe defaults. The tool schema
-    // marks every field required, but the API doesn't enforce this strictly on
-    // the way out — and we've observed the model occasionally omitting blocks.
-    // Backfilling lets downstream assertions run without crashes; the constraint
-    // checks then catch the actual quality issues.
+    // Backfill any missing top-level fields with safe defaults.
     const raw = (toolUse.input ?? {}) as Partial<AllocatorOutput>;
+    const assignments = Array.isArray(raw.vehicle_assignments) ? raw.vehicle_assignments : [];
+
+    // Recompute derivable fields from input + assignments. The model is
+    // unreliable at numerical fields it has to track itself — it routinely
+    // emits 0 for active_disruptions when input.disruptions.length=2, or
+    // reports on_demand_reserve_pct=0 while emitting zero scheduled actions
+    // (internally inconsistent). For fields that ARE derivable from input +
+    // its own vehicle_assignments[] array, we compute the truthful value
+    // server-side rather than trusting whatever number the model emitted.
+    // Model judgment is preserved for the creative decisions (assignments
+    // themselves, corridor projections, recommendation prose).
+    const countByAction = (action: string) =>
+      assignments.filter((a) => a?.action === action).length;
+    const assigned_scheduled = countByAction("assign_to_scheduled");
+    const assigned_on_demand = countByAction("release_to_on_demand");
+    const repositioning =
+      countByAction("reposition_to_staging") + countByAction("reroute");
+    const idle = countByAction("hold_position");
+    const available = Math.max(input.fleet?.available_vehicles ?? 1, 1);
+    const computed_reserve_pct = Math.max(
+      0,
+      (available - assigned_scheduled - repositioning) / available,
+    );
+    const computed_utilization_rate = Math.min(
+      1,
+      (assigned_scheduled + assigned_on_demand + repositioning) / available,
+    );
+
+    const input_disruptions = Array.isArray(input.disruptions) ? input.disruptions : [];
+    const affected_corridors = new Set(
+      input_disruptions.flatMap((d) => d.affected_corridors ?? []),
+    );
+    const scheduled_rides = Array.isArray(input.scheduled_rides) ? input.scheduled_rides : [];
+    const computed_rerouted_rides = scheduled_rides.filter(
+      (r) =>
+        affected_corridors.has(r.pickup_corridor) ||
+        affected_corridors.has(r.dropoff_corridor),
+    ).length;
+    const computed_speed_compensation =
+      input_disruptions.some((d) => d.type === "weather");
+
+    const rawFleetState = raw.fleet_state_after ?? {
+      vehicles_assigned_scheduled: 0,
+      vehicles_assigned_on_demand: 0,
+      vehicles_repositioning: 0,
+      vehicles_idle: 0,
+      on_demand_reserve_pct: 0,
+      utilization_rate: 0,
+    };
+    const rawDisruption = raw.disruption_response ?? {
+      active_disruptions: 0,
+      rerouted_rides: 0,
+      eta_adjustments_communicated: 0,
+      speed_compensation_applied: false,
+    };
+
     const decision: AllocatorOutput = {
       timestamp: raw.timestamp ?? new Date().toISOString(),
       decision_id: raw.decision_id ?? `dec-fallback-${Date.now()}`,
-      vehicle_assignments: Array.isArray(raw.vehicle_assignments) ? raw.vehicle_assignments : [],
-      fleet_state_after: raw.fleet_state_after ?? {
-        vehicles_assigned_scheduled: 0,
-        vehicles_assigned_on_demand: 0,
-        vehicles_repositioning: 0,
-        vehicles_idle: 0,
-        on_demand_reserve_pct: 0,
-        utilization_rate: 0,
+      vehicle_assignments: assignments,
+      fleet_state_after: {
+        // Counts: trust the model's numbers if the assignment array is small
+        // (likely a sample), but always overwrite when assignments are dense.
+        vehicles_assigned_scheduled:
+          assigned_scheduled > 0 ? assigned_scheduled : rawFleetState.vehicles_assigned_scheduled,
+        vehicles_assigned_on_demand:
+          assigned_on_demand > 0 ? assigned_on_demand : rawFleetState.vehicles_assigned_on_demand,
+        vehicles_repositioning:
+          repositioning > 0 ? repositioning : rawFleetState.vehicles_repositioning,
+        vehicles_idle: idle > 0 ? idle : rawFleetState.vehicles_idle,
+        // Reserve and utilization: always recompute from the truth.
+        on_demand_reserve_pct: Number(computed_reserve_pct.toFixed(4)),
+        utilization_rate: Number(computed_utilization_rate.toFixed(4)),
       },
       corridor_impacts: Array.isArray(raw.corridor_impacts) ? raw.corridor_impacts : [],
       no_show_handling: raw.no_show_handling ?? {
@@ -118,11 +176,16 @@ export async function POST(req: NextRequest) {
         capacity_warnings: [],
         recommendation: "(agent output incomplete — backfilled with defaults)",
       },
-      disruption_response: raw.disruption_response ?? {
-        active_disruptions: 0,
-        rerouted_rides: 0,
-        eta_adjustments_communicated: 0,
-        speed_compensation_applied: false,
+      disruption_response: {
+        // Always overwrite from input — these are derivable, not creative.
+        active_disruptions: input_disruptions.length,
+        speed_compensation_applied: computed_speed_compensation,
+        rerouted_rides:
+          // Trust model if it claimed a count, else compute from input crossing.
+          typeof rawDisruption.rerouted_rides === "number" && rawDisruption.rerouted_rides > 0
+            ? rawDisruption.rerouted_rides
+            : computed_rerouted_rides,
+        eta_adjustments_communicated: rawDisruption.eta_adjustments_communicated ?? 0,
       },
     };
     const constraint_checks = checkConstraints(decision);
