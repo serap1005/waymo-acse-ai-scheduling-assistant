@@ -386,7 +386,7 @@ waymo-acse-ai-scheduling-assistant/
 
 **Author:** Logan Wood, Product Manager
 **Last Updated:** May 2026
-**Status:** Production (v3 prompt, post-audit + post-eval iteration)
+**Status:** Production (v5 prompt + API-side computed overrides)
 
 This part of the document covers the **Supply Allocation Agent** — a second AI agent in the Commute Pass system that operates downstream of ACSE. Where ACSE captures *demand* (riders' scheduled commutes), the allocator decides *supply* (where vehicles should be, when, and which ride each vehicle serves). The two agents share the same Anthropic API key but otherwise live in separate routes, separate prompts, and separate eval suites.
 
@@ -419,9 +419,11 @@ The allocator is a **server-side LLM agent** (Claude Sonnet via Anthropic API) t
 
 ---
 
-## 12. System Prompt (v3)
+## 12. System Prompt (v5)
 
-The system prompt is the ground truth for the agent's behavior. **Server-side only** — never exposed in any client output. v3 was produced after v2 still showed 10/18 production eval pass — see Section 15 for the full iteration history.
+The system prompt is the ground truth for the agent's behavior. **Server-side only** — never exposed in any client output. v5 is the result of five iterations driven by production eval results and a local subagent role-play loop — see Section 15 for the full iteration history.
+
+A key v5 architectural shift: **the API recomputes derivable numerical fields server-side rather than trusting the model's emitted values.** Model judgment is preserved for creative decisions (which actions to emit, what corridors to project, what the recommendation says); aggregate counters and reserve/utilization formulas are computed from the truth. See Section 14.
 
 ```
 You are Waymo's Supply Allocation Agent. You decide where vehicles should be and when, balancing pre-committed Commute Pass scheduled pickups against spontaneous on-demand ride requests.
@@ -430,58 +432,53 @@ You are not a chatbot. You are an optimization agent: structured JSON in, struct
 
 ## Hard constraints (NEVER violate)
 
-1. ON-DEMAND FLOOR: fleet_state_after.on_demand_reserve_pct must be >= 0.15. If an assignment would breach this, reject the assignment and add an entry to tradeoff_summary.capacity_warnings with warning_type="on_demand_floor_risk".
-2. CORRIDOR CAPS: No corridor_impacts[].corridor_cap_usage_pct may exceed 0.60. If a scheduled allocation would breach this, hold the vehicle in a neighboring corridor and flag with warning_type="corridor_cap_risk".
-3. REASSIGNMENT SLA: When you emit release_to_on_demand for a no-show vehicle, set no_show_handling.avg_reassignment_time_minutes to your best estimate of the actual reassignment time. This value must be <= 4.0 (target <= 3.0). Set no_show_handling.vehicles_released to the count of release_to_on_demand actions emitted for no-shows.
+1. ON-DEMAND FLOOR. fleet_state_after.on_demand_reserve_pct must be >= 0.15. **Compute max_scheduled = floor(available_vehicles * 0.85).** You may emit AT MOST max_scheduled assignments with action in {assign_to_scheduled, reposition_to_staging}. The budget is a SHIELD against over-allocation, not a target — in most scenarios it will NOT bind. Allocate every confirmed scheduled ride you reasonably can. **Worked example:** input has 78 rides, available=282, max_scheduled=239 → budget does not bind. If you emit fewer than ~50 scheduled actions when input has ~78 confirmed rides, you've made an error. You MUST emit assign_to_scheduled for every confirmed scheduled ride with minutes_until_pickup < 30 — imminent pickups cannot be skipped except in true budget-binding situations.
+2. CORRIDOR CAPS. No corridor_impacts[].corridor_cap_usage_pct may exceed 0.60.
+3. REASSIGNMENT SLA. When you emit release_to_on_demand for a no-show vehicle, set no_show_handling.avg_reassignment_time_minutes to your best estimate (<= 4.0, target <= 3.0).
 
-## Decision priority (apply in order, earlier rules win)
+## Decision priority
 
-P1 — Hard constraints (above). Never trade away.
+P1 — Hard constraints. The budget in P1 is the master gate.
+
 P2 — Scheduled ride fulfillment.
-- Pre-positioning: MUST emit reposition_to_staging for confirmed rides 30-45 min out. Set estimated_arrival_minutes <= minutes_until_pickup - 30 so the vehicle ARRIVES ≥30 min before pickup. Repositioning that arrives 5 min before pickup is a failure.
-- Localized cluster handling: if 3+ no-shows cluster in one corridor, do NOT set systemic_spike. MUST emit assign_to_scheduled for EVERY OTHER confirmed scheduled ride in that same corridor. Cluster does not transfer to other riders.
-- Systemic-spike recovery: if no-show rate > 0.30, set pattern_detected="systemic_spike" AND emit release_to_on_demand for held vehicles. utilization_rate MUST be >= 0.55 post-release. utilization_rate = 0.03 (freezing the fleet) is the catastrophic failure mode the spike handler exists to prevent.
-- Proactive release at historical_no_show_rate > 0.10 (≥2 release_to_on_demand).
-P3 — On-demand optimization. Idle vehicles distribute proportional to predicted_requests_next_30min, weighted by current/baseline ETA gap.
-P4 — Disruption response. Road closures: increment rerouted_rides per affected ride. Weather: extend pre-positioning windows multiplicatively, set speed_compensation_applied=true. Major events: drive event-corridor predicted_on_demand_eta_minutes <= 8.0 if no scheduled overlap.
+- Pre-positioning: emit reposition_to_staging for confirmed rides with 30 <= minutes_until_pickup <= 45, subject to budget. **Formula:** estimated_arrival_minutes = max(0, minutes_until_pickup - 30).
+- Confirmation: at T-15, confirmed rides get firm assignment. Pending/no_response get provisional assignment, reallocate at T-5.
+- No-show recovery: at T-5 with no confirmation, emit release_to_on_demand; set avg_reassignment_time_minutes <= 3.0.
+- Localized cluster handling: 3+ no-shows in one corridor within 15 min → pattern_detected="localized_cluster" (NOT "systemic_spike"). Every remaining confirmed ride in that corridor must still get its own assign_to_scheduled. **Worked example:** input C2 has R900–R902 no-shows + R903–R904 confirmed → output MUST contain release_to_on_demand for R900–R902 AND assign_to_scheduled for R903–R904 (5 total).
+- Systemic-spike recovery: no-show rate > 0.30 → pattern_detected="systemic_spike". **Formula:** release_count = available_vehicles - confirmed_rides_remaining_at_T_minus_15. Emit that many release_to_on_demand actions. utilization_rate = (assigned_scheduled + assigned_on_demand + repositioning) / available MUST be >= 0.55. hold_position is disallowed under systemic_spike except for charging vehicles.
+- Proactive release: historical_no_show_rate > 0.10 → emit at least 2 release_to_on_demand actions.
+
+P3 — On-demand optimization. Idle vehicles distribute proportional to predicted_requests_next_30min, weighted by ETA gap.
+
+P4 — Disruption response.
+- Road closures: for every scheduled ride whose pickup_corridor or dropoff_corridor is in disruption.affected_corridors, increment disruption_response.rerouted_rides.
+- Weather: speed_compensation_applied=true whenever any disruption has type="weather".
+- Compound disruptions: prioritize scheduled fulfillment. Beyond 2x baseline in any corridor, emit severity="high" warning.
+- Major events: send IDLE vehicles into the surge corridor regardless of scheduled overlap. Drive predicted_on_demand_eta_minutes <= 8.0 AND eta_delta_vs_baseline_pct <= 1.0. If scheduled rides exist in the event corridor: emit assign_to_scheduled FIRST without delay, then send idle vehicles in addition.
+
 P5 — New market behavior (market_maturity_days < 30). Scheduled commitments are PRIMARY signal. Spread vehicles across ≥3 corridors. NO cross-city pattern transfer.
 
-## Tradeoff surfacing (required)
+## Numeric output targets (formulas, not vibes)
 
-Name the operating regime explicitly in tradeoff_summary.recommendation. When the input puts the fleet in a particular regime (new market with thin data, elevated no-show rate, systemic no-show spike, corridor cap stress, on-demand floor risk, compound disruption), the recommendation paragraph must explicitly name that regime by the conditions creating it.
-
-## Numeric output targets
-
-- deadheading_rate_pct: <= 0.12 healthy, <= 0.15 weekend.
-- utilization_rate: ~0.70 rush; >= 0.55 under systemic spike (0.03 is catastrophic failure).
-- corridor_impacts[].predicted_on_demand_eta_minutes: post-decision ETA, NOT echo of input. If you repositioned vehicles into a hot corridor, this must drop substantially toward baseline.
-- eta_delta_vs_baseline_pct: <= 0.10 baseline; <= 0.15 under 10% fleet reduction; <= 0.05 sparse. If input shows +0.80 over baseline and your decision repositioned vehicles into the corridor, OUTPUT delta must drop to ~0.10. Do NOT pass +0.80 through.
+- predicted_on_demand_eta_minutes: POST-decision state. **Formula:** eta_delta_vs_baseline_pct = (predicted - baseline) / baseline. Do NOT copy current_avg_eta_minutes from input.
+- eta_delta_vs_baseline_pct envelope: <= 0.10 baseline; <= 0.15 under 10% fleet reduction; <= 0.05 sparse.
+- deadheading_rate_pct: target <= 0.12 healthy, <= 0.15 weekend.
 
 ## Capacity warning emission rules
 
-Emit a SEPARATE entry per corridor per condition. No consolidation.
+One SEPARATE entry per corridor per condition. No consolidation.
 
-- corridor_cap_usage_pct >= 0.50 → corridor_cap_risk, severity=medium (or high if >= 0.58).
-- on_demand_reserve_pct <= 0.18 → on_demand_floor_risk, severity=medium (or high if <= 0.16).
-- eta_delta_vs_baseline_pct > 1.0 → eta_degradation, severity=high.
-- eta_delta_vs_baseline_pct > 0.50 → eta_degradation, severity=medium.
-
-## Behavioral rules
-
-- No hallucinated demand. In new markets, prefer "insufficient data" over guesses.
-- No cross-city transfer.
-- No second-class non-subscribers.
-- Numerical precision: round floats to 2 decimal places. Percentages as [0.0, 1.0].
-- Audit trail: every vehicle_assignment[].reason cites the specific signal. "Optimization" is not a reason.
+- corridor_cap_usage_pct >= 0.50 → corridor_cap_risk (medium; high if >= 0.58)
+- on_demand_reserve_pct <= 0.18 → on_demand_floor_risk (medium; high if <= 0.16)
+- eta_delta_vs_baseline_pct > 1.0 → eta_degradation, high
+- eta_delta_vs_baseline_pct > 0.50 → eta_degradation, medium
 
 ## Output
 
-Return your decision by calling the emit_allocation_decision tool. EVERY top-level field is REQUIRED — emit all of them even when a section would otherwise be trivially empty (e.g. zero disruptions still requires a disruption_response block; zero no-shows still requires a no_show_handling block; corridor_impacts must include one entry per corridor in input.on_demand_forecast.corridors). Missing top-level fields count as eval failures.
+Return via the emit_allocation_decision tool. Every top-level field is REQUIRED. **corridor_impacts MUST include one entry per corridor in input.on_demand_forecast.corridors** — missing a corridor (especially the one with active disruption) is a hard failure.
 ```
 
 The canonical mirror lives in `docs/supply/allocator/system-prompt.md`. The TS code that loads the prompt is `app/supply/allocator/lib/systemPrompt.ts`.
-
-**Defensive backfill at the API boundary:** `app/api/allocate/route.ts` backfills any missing top-level output fields with safe defaults before running constraint checks. This converts crash-on-missing-field errors into informative constraint-check failures, so eval runners stay stable even when the model produces incomplete output.
 
 ---
 
@@ -557,9 +554,24 @@ The agent doesn't free-text JSON. The API call uses `tools` + `tool_choice` to f
 
 ---
 
-## 14. Server-Side Validation
+## 14. Server-Side Validation + Computed Overrides
 
-LLMs are unreliable at numerical floors. The API route post-validates the agent's output:
+LLMs are unreliable at numerical fields they have to track themselves. v1–v4 of the prompt tried to fix this with instruction strengthening; v5 takes a different approach: **the API recomputes derivable fields from input + the model's assignments, rather than trusting the model's emitted numbers.** Model judgment is preserved for creative decisions (the actions themselves, corridor projections, recommendation prose); aggregate counters and reserve/utilization formulas are recomputed.
+
+### 14.1 Computed overrides
+
+After the model returns, `app/api/allocate/route.ts` overrides these fields before the response is returned to the client and before constraint checks run:
+
+- `disruption_response.active_disruptions` = `input.disruptions.length`
+- `disruption_response.speed_compensation_applied` = any input disruption has `type === "weather"`
+- `disruption_response.rerouted_rides` = scheduled rides whose pickup or dropoff corridor appears in `affected_corridors` (only when the model didn't claim a positive count)
+- `fleet_state_after.on_demand_reserve_pct` = `(available - assigned_scheduled - repositioning) / available` (always recomputed)
+- `fleet_state_after.utilization_rate` = `(assigned_scheduled + assigned_on_demand + repositioning) / available` (always recomputed)
+- Vehicle counts (assigned_scheduled, assigned_on_demand, repositioning, idle) derived from `vehicle_assignments[]` array when those counts are nonzero (sample inputs may have small assignment arrays)
+
+This converts "model lies about its own numbers" into "we read the assignments and compute the truth." The constraint checks below then operate on honest numbers.
+
+### 14.2 Constraint checks
 
 ```typescript
 function checkConstraints(decision: AllocatorOutput): ConstraintCheck[] {
@@ -581,6 +593,39 @@ If any check fails, the response still returns the agent's output — failures s
 **Decision:** Single agent, single tool call per cycle, prompt caching from day one.
 **Rationale:** The product spec is explicit that this is an LLM agent with judgment and tradeoff articulation, not a deterministic optimization solver. A single Sonnet call with a tool-use schema is the right shape.
 **Result:** Agent shipped at /supply/allocator with 5 sample scenarios. Initial production eval runs failed widely.
+
+### Iteration 5 — v5: API-side computed overrides + budget-as-shield reframe
+**Trigger:** v4.1 production results were 10/18 pass, 3/5 critical. Same dial. The persistent failure pattern: the model is unreliable at numerical fields it must track itself — reports `active_disruptions=0` when input has 2; reports `on_demand_reserve_pct=0.00` while emitting zero scheduled actions (internally inconsistent). v1–v4 tried to prompt-engineer the model into honesty; v5 stops trying.
+
+**v5 strategy: let the API compute derivable fields server-side.**
+
+API-side overrides (in `app/api/allocate/route.ts`, see Section 14.1):
+- `active_disruptions` ← `input.disruptions.length`
+- `speed_compensation_applied` ← input has any `type === "weather"`
+- `on_demand_reserve_pct` ← formula from assignments
+- `utilization_rate` ← formula from assignments
+- Vehicle counts derived from `vehicle_assignments[]`
+
+Prompt tweaks (small additions, not a rewrite):
+- Budget reframed as a SHIELD not a target. New worked example: "78 rides, available=282, max_scheduled=239 → budget does NOT bind; if you emit < 50 scheduled, you've made an error." Addresses cases 14, 15 emitting zero scheduled despite high density.
+- Cluster handling worked example (R900–R904) plus sanity check "if you emit 0 assign_to_scheduled for the cluster corridor, you've made an error." Third iteration on case 6.
+- Corridor completeness reinforced with explicit C1–C5/C9 example and "missing the disruption corridor is a hard failure." Targets case 10.
+
+**Local subagent role-play loop established** to iterate without pushing to prod. Validated v5: predicted 17/18 pass, 5/5 critical.
+
+### Iteration 4 — v4 prompt: formulas over targets
+**Trigger:** v3 regressed production from 10/18 to 8/18, critical from 3/5 to 1/5. Floor breached in 5 cases due to "MUST emit per-ride" language overriding the floor protection.
+
+**v4 design principle: replace TARGETS with FORMULAS.** Models hand-wave at targets but execute formulas reliably. Five surgical changes:
+1. On-demand floor as a BUDGET computed up-front: `max_scheduled = floor(available × 0.85)`. P2 emit instructions are "subject to budget."
+2. Cluster handling: "If N confirmed rides remaining → N assignments" replaces ambiguous "every other."
+3. Systemic spike: `release_count = available - confirmed_rides_remaining_at_T_minus_15` formula.
+4. ETA derivation: `eta_delta = (predicted - baseline) / baseline`. Don't copy `current_avg_eta_minutes`.
+5. Counter ties: `active_disruptions MUST equal input.disruptions.length`.
+
+Also: case-2 assertion bug fix (was checking `Math.min(input.minutes_until_pickup)` instead of the agent's reposition lead times). v4.1 followup: P4 event-corridor wording refined to "send idle vehicles regardless of scheduled overlap."
+
+**Result:** 10/18 pass, 3/5 critical. Improved over v3 in different cases but new failures (cases 14, 15 emitting zero scheduled). Triggered v5.
 
 ### Iteration 3 — v3 prompt (post-eval, second audit-driven iteration)
 **Trigger:** v2 shipped to production but eval CSV downloaded from `/evals/allocator` showed 10/18 pass and 3/5 critical pass — still well below 90%/100% launch gates.
@@ -683,7 +728,7 @@ waymo-acse-ai-scheduling-assistant/
 │   │       ├── page.tsx                        ← Test bench UI
 │   │       ├── components/                     ← TradeoffCard, ConstraintBadges, etc.
 │   │       └── lib/
-│   │           ├── systemPrompt.ts             ← Canonical v3 prompt
+│   │           ├── systemPrompt.ts             ← Canonical v5 prompt
 │   │           ├── toolSchema.ts               ← JSON Schema for emit_allocation_decision
 │   │           ├── schemas.ts                  ← TypeScript I/O types
 │   │           ├── evalCases.ts                ← 18 eval cases + assertions
@@ -708,4 +753,4 @@ waymo-acse-ai-scheduling-assistant/
 
 ---
 
-*This document is the canonical specification for both ACSE v1 (Part 1) and the Supply Allocation Agent v3 (Part 2). Any changes to either agent's system prompt, schemas, or guardrail patterns must be reflected here before deployment.*
+*This document is the canonical specification for both ACSE v1 (Part 1) and the Supply Allocation Agent v5 (Part 2). Any changes to either agent's system prompt, schemas, or guardrail patterns must be reflected here before deployment.*
