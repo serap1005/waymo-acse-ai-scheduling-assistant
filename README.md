@@ -206,8 +206,7 @@ The free Vercel hobby tier is sufficient for the deployed demo. Both API routes 
 
 ## Credits
 
-**Sera Park** 
-**Logan Wood**
+**Sera Park** | **Logan Wood**
 
 Strategic framing inspired by [Waymo](https://waymo.com)'s public operational data and the broader autonomous rideshare landscape. All product names, scenarios, and operational numbers in this prototype are illustrative.
 
