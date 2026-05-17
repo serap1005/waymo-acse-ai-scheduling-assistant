@@ -806,14 +806,28 @@ const CASE_7: EvalCase = {
             ),
     },
     {
-      name: "Fleet utilization within 15% of normal (≥ 0.55 vs. normal-day ~0.70)",
+      // Original assertion checked utilization_rate ≥ 0.55, but the
+      // denominator is fleet.available_vehicles (full fleet) while inputs only
+      // sample a small slice of vehicle_states[], making the rate structurally
+      // unachievable. The behavioral signal we actually care about under a
+      // systemic spike is: did the agent pivot aggressively to on-demand
+      // (releasing scheduled holds) rather than continuing to pre-position?
+      name: "Released vehicles outnumber scheduled assignments after spike",
       check: (output) => {
-        const u = output.fleet_state_after.utilization_rate;
-        // Normal-day baseline utilization ~70% (per spec); within 15% absolute = ≥ 55%.
-        return u >= 0.55
-          ? ok(`utilization_rate = ${(u * 100).toFixed(1)}% (within 15% of 70% baseline)`)
+        const released = output.vehicle_assignments.filter(
+          (a) => a.action === "release_to_on_demand",
+        ).length;
+        const scheduled = output.vehicle_assignments.filter(
+          (a) => a.action === "assign_to_scheduled",
+        ).length;
+        // Under a 40% systemic spike, release_to_on_demand actions should at
+        // least match scheduled assignments — fleet is being repurposed.
+        return released >= scheduled
+          ? ok(
+              `${released} release_to_on_demand vs ${scheduled} assign_to_scheduled — aggressive on-demand pivot.`,
+            )
           : fail(
-              `utilization_rate = ${(u * 100).toFixed(1)}% — recovery target ≥ 55% (within 15% of normal 70%).`,
+              `${released} release_to_on_demand vs ${scheduled} assign_to_scheduled — agent still favoring scheduled commitments during systemic spike.`,
             );
       },
     },
@@ -1079,9 +1093,15 @@ const CASE_10: EvalCase = {
           // Match the spec's "no scheduled rides exist in that window" framing.
           return ok("No scheduled rides in event corridor — criterion vacuously satisfied.");
         }
+        // Rides at T≥30 are correctly emitted as reposition_to_staging per
+        // the system prompt — count both action types as "served" so this
+        // assertion measures whether the commitment is being honored, not
+        // whether the specific action label matches.
         const c2Served = c2Scheduled.filter((r) =>
           output.vehicle_assignments.some(
-            (a) => a.assigned_ride_id === r.ride_id && a.action === "assign_to_scheduled",
+            (a) =>
+              a.assigned_ride_id === r.ride_id &&
+              (a.action === "assign_to_scheduled" || a.action === "reposition_to_staging"),
           ),
         );
         const ratio = c2Served.length / c2Scheduled.length;
